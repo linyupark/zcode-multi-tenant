@@ -109,6 +109,32 @@ button.stopping{background:var(--negative);color:#fff;border-color:var(--negativ
 
 .msg-files{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
 .file-chip{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.32);border-radius:6px;padding:2px 8px;font-size:12px;line-height:1.5}
+/* 工具调用图标条 */
+.tool-icons{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.tool-icon{width:28px;height:28px;min-width:28px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--muted);display:grid;place-items:center;padding:0;cursor:pointer}
+.tool-icon:hover{color:var(--accent);border-color:var(--accent)}
+.tool-icon.on{color:var(--accent);border-color:var(--accent);background:#eef7f9}
+.tool-detail{margin:0 0 10px;padding:8px 12px;background:var(--raised);border-radius:6px;font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
+/* Markdown 输出 */
+.out-block{position:relative}
+.out-body{line-height:1.65;font-size:14px}
+.out-body.src{white-space:pre-wrap;font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--raised);border-radius:6px;padding:10px 12px}
+.out-body h1,.out-body h2,.out-body h3,.out-body h4,.out-body h5,.out-body h6{margin:14px 0 6px;line-height:1.35;font-weight:600}
+.out-body h1{font-size:19px}.out-body h2{font-size:17px}.out-body h3{font-size:15px}
+.out-body p{margin:8px 0}
+.out-body ul,.out-body ol{margin:8px 0;padding-left:22px}
+.out-body li{margin:3px 0}
+.out-body blockquote{border-left:3px solid var(--border);margin:8px 0;padding:4px 12px;color:var(--muted)}
+.out-body pre{background:var(--raised);border-radius:8px;padding:10px 12px;overflow:auto;margin:10px 0}
+.out-body pre code{background:none;padding:0;font-family:"IBM Plex Mono",monospace;font-size:12.5px}
+.out-body code{background:var(--raised);border-radius:4px;padding:1px 5px;font-family:"IBM Plex Mono",monospace;font-size:12.5px}
+.out-body a{color:var(--accent)}
+.out-body hr{border:0;border-top:1px solid var(--border);margin:14px 0}
+.out-body table{border-collapse:collapse;margin:10px 0;font-size:13px;max-width:100%;display:block;overflow-x:auto}
+.out-body th,.out-body td{border:1px solid var(--border);padding:5px 10px;text-align:left;white-space:nowrap}
+.out-body th{background:var(--raised);font-weight:600}
+.md-toggle{display:block;margin:8px 0 0 auto;background:none;border:0;color:var(--muted);font-size:11.5px;cursor:pointer;padding:2px 4px}
+.md-toggle:hover{color:var(--accent)}
 /* 附件条 */
 #attach-bar{padding:8px var(--pad);background:var(--raised);border-top:1px solid var(--rule);display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px}
 #attach-bar .att{background:var(--surface);border:1px solid var(--control);border-radius:6px;padding:2px 9px;display:flex;gap:6px;align-items:center}
@@ -416,21 +442,8 @@ function buildTurn(t) {
     blk.querySelector(".think-body").textContent = t.think;
     b.appendChild(blk);
   }
-  for (const tool of t.tools || []) {
-    const card = document.createElement("details");
-    card.className = "tool-call";
-    card.innerHTML = `<summary><span class="tri">▶</span><span class="tname"></span><span class="tbrief"></span></summary><div class="tool-body"></div>`;
-    card.querySelector(".tname").textContent = tool.name;
-    card.querySelector(".tbrief").textContent = tool.brief;
-    card.querySelector(".tool-body").textContent = tool.detail;
-    b.appendChild(card);
-  }
-  if (t.text) {
-    const out = document.createElement("div");
-    out.className = "out-text";
-    out.textContent = t.text;
-    b.appendChild(out);
-  }
+  for (const tool of t.tools || []) addToolIcon(b, tool.name, tool.brief, tool.detail, "");
+  if (t.text) setOutContent(b, t.text);
   if (!b.childNodes.length) b.textContent = "（这轮由后台子任务完成，无直接输出）";
   frag.appendChild(a);
   return frag;
@@ -484,27 +497,140 @@ function appendThink(bubble, delta) {
   // 用户没手动展开时保持折叠（展开状态下自动滚到底）
   if (blk.open) blk.querySelector(".think-body").scrollTop = 1e9;
 }
-/* 工具调用卡片：单行折叠（工具名 + 参数摘要），对齐桌面端 */
-function addToolCard(bubble, name, brief, detail) {
-  const card = document.createElement("details");
-  card.className = "tool-call";
-  card.innerHTML = `<summary><span class="tri">▶</span><span class="tname"></span><span class="tbrief"></span></summary><div class="tool-body"></div>`;
-  card.querySelector(".tname").textContent = name;
-  card.querySelector(".tbrief").textContent = brief || "";
-  card.querySelector(".tool-body").textContent = detail || brief || "";
-  // 工具卡片插到思考块之后、正文之前（正文是 bubble 尾部的文本节点）
-  const think = bubble.querySelector("details.think");
-  const outEl = bubble.querySelector(".out-text");
-  if (outEl) bubble.insertBefore(card, outEl);
-  else if (think) think.after(card);
-  else bubble.appendChild(card);
-  $("chat").scrollTop = 1e9;
-  return card;
+/* ---------- 工具调用：横向图标条（不同工具不同图标，点击展开详情） ---------- */
+function toolIconSvg(name) {
+  const n = String(name || "").toLowerCase();
+  const svg = (inner) => `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  if (n.includes("skill")) return svg('<path d="M12 3l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L4.8 8.3l5-.7z"/>');
+  if (n.includes("mcp")) return svg('<path d="M9 7V4a3 3 0 0 1 6 0v3"/><rect x="5" y="7" width="14" height="10" rx="2"/><path d="M9 17v3M15 17v3"/>');
+  if (n === "bash" || n.includes("shell") || n.includes("terminal")) return svg('<path d="M4 7l5 5-5 5M12 17h8"/>');
+  if (["read", "write", "edit", "glob", "grep", "file"].some((k) => n.includes(k))) return svg('<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>');
+  if (n.includes("task") || n.includes("agent")) return svg('<circle cx="12" cy="8" r="3"/><path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/>');
+  // 默认：扳手
+  return svg('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2-2z"/>');
 }
-function ensureOutText(bubble) {
-  let el = bubble.querySelector(".out-text");
-  if (!el) { el = document.createElement("div"); el.className = "out-text"; bubble.appendChild(el); }
-  return el;
+function ensureToolBar(bubble) {
+  let bar = bubble.querySelector(".tool-icons");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "tool-icons";
+    bar.dataset.items = "[]";
+    const think = bubble.querySelector("details.think");
+    const out = bubble.querySelector(".out-block");
+    if (out) bubble.insertBefore(bar, out);
+    else if (think) think.after(bar);
+    else bubble.appendChild(bar);
+  }
+  return bar;
+}
+function addToolIcon(bubble, name, brief, detail, callId) {
+  const bar = ensureToolBar(bubble);
+  let items = [];
+  try { items = JSON.parse(bar.dataset.items || "[]"); } catch { /* ignore */ }
+  if (callId && items.some((x) => x.callId === callId)) return; // 同一次调用的事件去重
+  const idx = items.length;
+  items.push({ name, brief: brief || "", detail: detail || "", callId: callId || "" });
+  bar.dataset.items = JSON.stringify(items);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "tool-icon";
+  btn.title = `${name}${brief ? " · " + brief : ""}`;
+  btn.innerHTML = toolIconSvg(name);
+  btn.onclick = () => toggleToolDetail(bubble, bar, idx, btn);
+  bar.appendChild(btn);
+  $("chat").scrollTop = 1e9;
+}
+function toggleToolDetail(bubble, bar, idx, btn) {
+  const items = JSON.parse(bar.dataset.items || "[]");
+  const item = items[idx];
+  if (!item) return;
+  let det = bubble.querySelector(".tool-detail");
+  if (det && det.dataset.idx === String(idx)) { det.remove(); btn.classList.remove("on"); return; }
+  if (det) det.remove();
+  bar.querySelectorAll(".tool-icon").forEach((b) => b.classList.remove("on"));
+  btn.classList.add("on");
+  det = document.createElement("div");
+  det.className = "tool-detail";
+  det.dataset.idx = String(idx);
+  det.textContent = `${item.name}${item.brief ? " — " + item.brief : ""}\n\n${item.detail || ""}`.trim();
+  bar.after(det);
+  $("chat").scrollTop = 1e9;
+}
+/* ---------- Markdown 渲染（零依赖，先转义再转换） ---------- */
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function mdToHtml(src) {
+  const codes = [];
+  let t = escapeHtml(src || "");
+  // 围栏代码块先抽出占位
+  t = t.replace(/```[^\n]*\n([\s\S]*?)```/g, (m, code) => { codes.push(code); return "\u0000CODE" + (codes.length - 1) + "\u0000"; });
+  const inls = [];
+  t = t.replace(/`([^`\n]+)`/g, (m, c) => { inls.push(c); return "\u0000INL" + (inls.length - 1) + "\u0000"; });
+  const lines = t.split("\n");
+  let html = "", listType = null, para = [], tableBuf = [];
+  const flushPara = () => { if (para.length) { html += "<p>" + para.join("<br>") + "</p>"; para = []; } };
+  const closeList = () => { if (listType) { html += "</" + listType + ">"; listType = null; } };
+  const flushTable = () => {
+    if (!tableBuf.length) return;
+    const rows = tableBuf.map((r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+    tableBuf = [];
+    if (!rows.length) return;
+    let head = null, body = rows;
+    if (rows.length > 1 && rows[1].every((c) => /^:?-{2,}:?$/.test(c))) { head = rows[0]; body = rows.slice(2); }
+    html += "<table>";
+    if (head) html += "<thead><tr>" + head.map((c) => "<th>" + c + "</th>").join("") + "</tr></thead>";
+    html += "<tbody>" + body.map((r) => "<tr>" + r.map((c) => "<td>" + c + "</td>").join("") + "</tr>").join("") + "</tbody></table>";
+  };
+  for (const line of lines) {
+    if (/^\s*\|.*\|\s*$/.test(line)) { flushPara(); closeList(); tableBuf.push(line); continue; }
+    flushTable();
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const bq = line.match(/^>\s?(.*)$/);
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { flushPara(); closeList(); html += "<hr>"; continue; }
+    if (h) { flushPara(); closeList(); const lv = h[1].length; html += "<h" + lv + ">" + h[2] + "</h" + lv + ">"; continue; }
+    if (ul) { flushPara(); if (listType !== "ul") { closeList(); html += "<ul>"; listType = "ul"; } html += "<li>" + ul[1] + "</li>"; continue; }
+    if (ol) { flushPara(); if (listType !== "ol") { closeList(); html += "<ol>"; listType = "ol"; } html += "<li>" + ol[1] + "</li>"; continue; }
+    if (bq) { flushPara(); closeList(); html += "<blockquote>" + bq[1] + "</blockquote>"; continue; }
+    if (!line.trim()) { flushPara(); closeList(); continue; }
+    para.push(line);
+  }
+  flushTable(); flushPara(); closeList();
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/\u0000INL(\d+)\u0000/g, (m, i) => "<code>" + inls[Number(i)] + "</code>");
+  html = html.replace(/\u0000CODE(\d+)\u0000/g, (m, i) => "<pre><code>" + codes[Number(i)] + "</code></pre>");
+  return html;
+}
+/* 输出块：默认 Markdown 预览，可切换源码 */
+function setOutContent(bubble, text) {
+  let block = bubble.querySelector(".out-block");
+  if (!block) {
+    block = document.createElement("div");
+    block.className = "out-block";
+    block.innerHTML = `<div class="out-body md"></div><button type="button" class="md-toggle">查看源码</button>`;
+    const toolDetail = bubble.querySelector(".tool-detail");
+    const toolbar = bubble.querySelector(".tool-icons");
+    if (toolDetail) toolDetail.after(block);
+    else if (toolbar) toolbar.after(block);
+    else bubble.appendChild(block);
+    block.querySelector(".md-toggle").onclick = () => {
+      const body = block.querySelector(".out-body");
+      const md = !body.classList.contains("md");
+      body.classList.toggle("md", md);
+      body.classList.toggle("src", !md);
+      block.querySelector(".md-toggle").textContent = md ? "查看源码" : "查看预览";
+      body.innerHTML = md ? mdToHtml(block.dataset.raw || "") : escapeHtml(block.dataset.raw || "");
+    };
+  }
+  block.dataset.raw = text || "";
+  const body = block.querySelector(".out-body");
+  if (body.classList.contains("md")) body.innerHTML = mdToHtml(text || "");
+  else body.textContent = text || "";
 }
 let currentAbort = null;
 async function sendMsg() {
@@ -532,7 +658,7 @@ async function sendMsg() {
   };
   let thinkOpen = false; // 用户是否手动展开过思考块
   bubble.addEventListener("toggle", (e) => { if (e.target.matches?.("details.think")) thinkOpen = e.target.open; }, true);
-  const setOut = (t) => { const el = ensureOutText(bubble); el.textContent = t; };
+  const setOut = (t) => { setOutContent(bubble, t); };
   try {
     const resp = await fetch("/api/chat", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -585,7 +711,7 @@ async function sendMsg() {
                 : p.args ? JSON.stringify(p.args).slice(0, 90)
                 : p.summary || p.description || "";
               const detail = p.input != null ? (typeof p.input === "string" ? p.input : JSON.stringify(p.input, null, 1)) : (p.args ? JSON.stringify(p.args, null, 1) : brief);
-              addToolCard(bubble, name, brief, detail);
+              addToolIcon(bubble, name, brief, detail, p.callID || p.callId || p.id);
             }
           }
         } else if (evName === "fallback") {
@@ -593,7 +719,7 @@ async function sendMsg() {
           note.className = "fallback-note";
           note.style.cssText = "margin:6px 0;padding:5px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e";
           note.textContent = `模型 ${ev.from} 调用失败，已自动切换到 ${ev.to}${ev.reason ? "（" + ev.reason.slice(0, 60) + "）" : ""}`;
-          bubble.insertBefore(note, bubble.querySelector(".out-text") || null);
+          bubble.insertBefore(note, bubble.querySelector(".out-block") || null);
           $("status").textContent = "已切换备用模型…";
         } else if (evName === "end") {
           $("status").textContent = ev.code === 0 ? "完成" : (`退出码 ${ev.code}` + (ev.error ? "：" + String(ev.error).slice(0, 80) : ""));
@@ -615,7 +741,7 @@ async function sendMsg() {
       if (!bubble.textContent && !acc) setOut("（出错：" + e.message + "）");
     }
   } finally { restoreBtn(); }
-  if (!acc && !bubble.querySelector(".think-body") && !bubble.querySelector(".tool-call")) setOut("（无输出）");
+  if (!acc && !bubble.querySelector(".think-body") && !bubble.querySelector(".tool-icons")) setOut("（无输出）");
 }
 $("btn-send").onclick = sendMsg;
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMsg(); });
