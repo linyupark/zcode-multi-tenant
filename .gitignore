@@ -1,0 +1,17 @@
+# 运行时数据（账号、会话、工作区、模型密钥、品牌配置）
+data/
+# 内核（官方构建产物，通过 scripts/update-kernel.mjs 获取）
+kernel/
+kernel.bak-*
+.kernel-work/
+# 本地配置
+.env
+# 依赖与日志
+node_modules/
+*.log
+*.out
+server.pid
+# 设计工具产物
+.taste-skill/
+# 参考项目
+ref/

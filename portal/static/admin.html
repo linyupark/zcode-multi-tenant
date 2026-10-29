@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZCode 门户 · 管理后台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#f9fbfc; --surface:#fff; --raised:#f4f6f8; --active:#ebedee;
+  --border:#e8eaec; --rule:#f0f1f2; --control:#cdced1;
+  --text:#131416; --muted:#5d5f60;
+  --accent:#1b6c80; --positive:#1e7b4f; --negative:#c4242a; --warning:#92400e;
+  --pill-positive-bg:#dcfae5; --pill-positive-ink:#04250e;
+  --pill-neutral-bg:#ebedee; --pill-neutral-ink:#353736;
+  --radius-card:8px; --radius-control:6px; --radius-sheet:16px;
+  --gap:24px; --pad:24px; --row-height:48px;
+  --fs-title:22px; --fs-section:16px; --fs-body:14px; --fs-small:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+.hidden{display:none!important}
+body{font:400 var(--fs-body)/1.5 "IBM Plex Sans",Inter,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--ground);color:var(--text)}
+/* --- L 形框 + 白纸壳 --- */
+#shell{display:grid;grid-template-columns:228px 1fr;grid-template-rows:48px 1fr;height:100vh;overflow:hidden}
+#topbar{grid-column:2;background:var(--ground);display:flex;align-items:center;gap:12px;padding:0 var(--pad)}
+#topbar .crumb{color:var(--muted)}
+#topbar .crumb b{color:var(--text);font-weight:500}
+#topbar .spacer{flex:1}
+#sidebar{grid-row:1/3;background:var(--ground);padding:14px 12px;display:flex;flex-direction:column;gap:2px}
+.brand{display:flex;align-items:center;gap:9px;padding:4px 10px 16px}
+.brand .mark{width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:600;font-size:13px}
+.brand .name{font-weight:600;font-size:14px}
+.brand .env{font-size:11px;color:var(--muted);display:block;margin-top:1px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:var(--radius-control);color:var(--muted);text-decoration:none;font-size:13.5px;cursor:pointer}
+.nav-item:hover{background:var(--raised);color:var(--text)}
+.nav-item.on{color:var(--text);font-weight:500;box-shadow:inset 0 -2px 0 var(--accent);border-radius:6px 6px 0 0;background:none}
+#sheet{grid-column:2;grid-row:2;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sheet) 0 0 0;margin:0 8px 8px 0;padding:var(--pad);overflow-y:auto}
+/* --- 内容 --- */
+.title-row{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+h1{font-size:var(--fs-title);font-weight:600;letter-spacing:-0.01em}
+.title-row .sub{color:var(--muted);font-size:13px}
+section{margin-top:var(--gap)}
+h2{font-size:var(--fs-section);font-weight:600;margin-bottom:12px}
+h2 .note{font-weight:400;color:var(--muted);font-size:12.5px;margin-left:8px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card)}
+/* 表单 */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px}
+input,select{width:100%;padding:7px 11px;border:1px solid var(--control);border-radius:var(--radius-control);font:inherit;background:var(--surface);color:var(--text)}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+input::placeholder{color:#9a9c9e}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+/* 按钮：flat 单色 */
+button{font:inherit;border:0;border-radius:var(--radius-control);padding:7px 16px;cursor:pointer;background:var(--accent);color:#fff;font-weight:500}
+button:hover{filter:brightness(1.08)}
+button:active{filter:brightness(0.94)}
+button.ghost{background:var(--surface);color:var(--text);border:1px solid var(--control)}
+button.ghost:hover{background:var(--raised)}
+button:disabled{opacity:.5;cursor:default}
+.btn-row{display:flex;gap:10px;margin-top:4px}
+/* 状态条 */
+.msg{font-size:13px;min-height:20px;margin:8px 0}
+.msg.err{color:var(--negative)}
+.msg.ok{color:var(--positive)}
+/* KPI 行（数据而非磁贴） */
+.kpis{display:flex;gap:var(--gap);flex-wrap:wrap}
+.kpi .lbl{font-size:12.5px;color:var(--muted)}
+.kpi .val{font-size:28px;font-weight:400;font-variant-numeric:tabular-nums;line-height:1.2}
+.kpi .val small{font-size:13px;color:var(--muted)}
+/* 表格：仅对齐与细规则 */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+thead th{text-align:left;font-weight:500;color:var(--muted);font-size:12.5px;padding:10px 12px;border-bottom:1px solid var(--border)}
+tbody td{padding:12px;border-bottom:1px solid var(--rule);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--raised)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px}
+.pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:99px;background:var(--pill-neutral-bg);color:var(--pill-neutral-ink)}
+.pill.ok{background:var(--pill-positive-bg);color:var(--pill-positive-ink)}
+/* 登录门 */
+#gate{min-height:100vh;display:grid;place-items:center;background:var(--ground)}
+#gate .box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sheet);padding:32px;width:360px}
+#gate h1{font-size:var(--fs-title);margin-bottom:4px}
+#gate .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+#gate .field{margin-bottom:12px}
+.empty{padding:28px 12px;color:var(--muted);font-size:13px;text-align:center}
+/* 手机 */
+@media(max-width:768px){
+  h1{font-size:19px}
+  #shell{grid-template-columns:1fr;grid-template-rows:48px auto 1fr}
+  #sidebar{grid-row:2;flex-direction:row;overflow-x:auto;padding:8px 12px;gap:4px}
+  .brand{padding:0 8px 0 0}.brand .env{display:none}
+  .nav-item.on{box-shadow:inset 0 -2px 0 var(--accent)}
+  #sheet{grid-column:1;grid-row:3;margin:0 8px 8px;border-radius:var(--radius-sheet) var(--radius-sheet) 0 0}
+  .grid2{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- 密码门 -->
+<div id="gate">
+  <div class="box">
+    <div class="brand" style="padding:0 0 14px"><span class="mark">Z</span><span class="name">ZCode 门户</span></div>
+    <h1>管理后台</h1>
+    <div class="sub">模型统一下发给全部租户 · 租户端无需配置</div>
+    <div class="field">
+      <label>管理员密码（ADMIN_PASSWORD）</label>
+      <input id="pw" type="password" autocomplete="current-password">
+    </div>
+    <div class="msg err" id="gate-err"></div>
+    <button class="btn-row" style="width:100%" id="btn-gate-login">登录</button>
+    <div class="hint" style="margin-top:12px"><a href="/" style="color:var(--accent)">← 返回租户门户</a></div>
+  </div>
+</div>
+
+<!-- 面板 -->
+<div id="shell" class="hidden">
+  <div id="topbar">
+    <span class="crumb">ZCode 门户 / <b>管理后台</b></span>
+    <span class="spacer"></span>
+    <button class="ghost" id="btn-open-portal">打开租户门户 ↗</button>
+    <button class="ghost" id="btn-logout">退出</button>
+  </div>
+  <div id="sidebar">
+    <div class="brand"><span class="mark">Z</span><span><span class="name">ZCode 门户</span><span class="env">内网自部署</span></span></div>
+    <a class="nav-item on">模型配置</a>
+    <a class="nav-item">租户管理</a>
+    <a class="nav-item" style="margin-top:auto" href="https://github.com/zai-org/ZCode" target="_blank" rel="noopener">内核与升级说明 ↗</a>
+  </div>
+  <div id="sheet">
+    <div class="title-row">
+      <h1>全局模型配置</h1>
+      <span class="sub" id="sync-state"></span>
+    </div>
+    <div class="kpis" id="kpis"></div>
+
+    <section>
+      <h2>Provider <span class="note">保存后立即写入全部租户的工作环境</span></h2>
+      <div class="card" style="padding:20px">
+        <div class="grid2">
+          <div>
+            <div class="field"><label>Provider ID</label><input id="pv-id" placeholder="如 team-glm"></div>
+            <div class="field"><label>显示名</label><input id="pv-name" placeholder="如 Team GLM"></div>
+            <div class="field"><label>接口类型</label>
+              <select id="pv-kind">
+                <option value="anthropic">anthropic（Claude 兼容）</option>
+                <option value="openai">openai（OpenAI 兼容）</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <div class="field"><label>Base URL</label><input id="pv-url" placeholder="https://open.bigmodel.cn/api/anthropic"></div>
+            <div class="field"><label>API Key</label><input id="pv-key" type="password" placeholder="留空 = 沿用已保存的">
+              <div class="hint" id="key-hint"></div>
+            </div>
+            <div class="field"><label>默认模型（全名）</label><input id="pv-main" placeholder="team-glm/glm-5.3"></div>
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:6px"><label>模型列表（逗号分隔 · 第一个为默认，其余按顺序作为失效回退）</label><input id="pv-models" placeholder="glm-5.3, glm-5-turbo"></div>
+        <div class="msg err" id="pv-err"></div>
+        <div class="msg ok" id="pv-ok"></div>
+        <div class="hint">推送是全量覆盖：每个租户下一次启动会话时即使用新模型，正在运行的会话不受影响。</div>
+        <div class="btn-row">
+          <button id="btn-pv-save">保存并推送全部租户</button>
+          <button class="ghost" id="btn-pv-push">仅重新推送当前配置</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>品牌与外观 <span class="note">白标定制：租户端登录页与侧栏即时生效</span></h2>
+      <div class="card" style="padding:20px">
+        <div class="grid2">
+          <div>
+            <div class="field"><label>企业 / 应用名称（侧栏顶部与登录页标题）</label><input id="br-name" placeholder="如：示例企业 AI 工作台"></div>
+            <div class="field"><label>Logo 文字（Logo 图片为空时显示，1-4 字）</label><input id="br-logotext" placeholder="如：企" maxlength="4"></div>
+            <div class="field"><label>Logo 图片 URL（可选，http(s) 或 data:image）</label><input id="br-logourl" placeholder="https://…/logo.png"></div>
+          </div>
+          <div>
+            <div class="field"><label>副标题（登录页标语）</label><input id="br-tagline" placeholder="如：示例企业的专属 AI 工作区"></div>
+            <div class="field"><label>主题色（accent，#RRGGBB）</label><input id="br-accent" placeholder="#1b6c80"></div>
+            <div class="field"><label>自定义 CSS（预留扩展，注入租户端）</label><textarea id="br-css" rows="3" style="width:100%;padding:7px 11px;border:1px solid var(--control);border-radius:6px;font:inherit;font-family:'IBM Plex Mono',monospace;font-size:12px" placeholder=".bubble { border-radius: 2px; }"></textarea></div>
+          </div>
+        </div>
+        <div class="msg err" id="br-err"></div>
+        <div class="msg ok" id="br-ok"></div>
+        <div class="btn-row"><button id="btn-br-save">保存品牌配置</button><button class="ghost" id="btn-br-reset">恢复默认</button></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>企业全局技能 <span class="note">全员共享，放这里 → 自动注入每个租户；官方内核技能随内核走，无需配置</span></h2>
+      <div class="card" style="padding:20px">
+        <div class="hint" style="margin-bottom:12px">两种方式：① 直接把技能目录放到 <code class="mono" id="skills-dir">data/skills/</code>；② 在下面上传 zip（根层含 SKILL.md）或单个 SKILL.md。租户自建的同名技能不会被覆盖。</div>
+        <div id="gsk-list" style="margin-bottom:12px"></div>
+        <div class="btn-row">
+          <input type="file" id="gsk-file" class="hidden">
+          <button id="btn-gsk-upload">上传技能包</button>
+          <button class="ghost" id="btn-gsk-reinject">重新注入全部租户</button>
+        </div>
+        <div class="msg ok" id="gsk-ok"></div>
+        <div class="msg err" id="gsk-err"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>MCP 服务器 <span class="note">全局统一配置，保存后写入每个租户的工作环境；保存前可先测试工具列表</span></h2>
+      <div class="card" style="padding:20px">
+        <div id="mcp-list" style="margin-bottom:12px"></div>
+        <div id="mcp-tools-result" style="margin-bottom:12px"></div>
+        <div class="grid2">
+          <div>
+            <div class="field"><label>名称（字母数字_-）</label><input id="mcp-id" placeholder="如 my-mcp"></div>
+            <div class="field"><label>command（本地命令型）</label><input id="mcp-cmd" placeholder="npx"></div>
+            <div class="field"><label>args（JSON 数组）</label><input id="mcp-args" placeholder='["-y","@scope/server"]'></div>
+          </div>
+          <div>
+            <div class="field"><label>或 url（远程 HTTP/SSE 型，与 command 二选一）</label><input id="mcp-url" placeholder="https://mcp.yourcompany.com/mcp"></div>
+            <div class="field"><label>headers（JSON 对象，url 型可选，如 Authorization）</label><input id="mcp-headers" placeholder='{"Authorization":"Bearer xxx"}'></div>
+            <div class="field"><label>env（JSON 对象，command 型可选）</label><input id="mcp-env" placeholder='{"KEY":"value"}'></div>
+          </div>
+        </div>
+        <div class="msg err" id="mcp-err"></div>
+        <div class="msg ok" id="mcp-ok"></div>
+        <div class="btn-row">
+          <button id="btn-mcp-add">添加并推送全部租户</button>
+          <button class="ghost" id="btn-mcp-test">先测试工具列表</button>
+          <button class="ghost hidden" id="btn-mcp-cancel">取消编辑</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>租户 <span class="note" id="user-note"></span></h2>
+      <table>
+        <thead><tr><th>用户名</th><th>显示名</th><th>UID</th><th class="num">工作区</th><th class="num">注册时间</th><th class="num">操作</th></tr></thead>
+        <tbody id="user-rows"></tbody>
+      </table>
+      <div class="empty hidden" id="user-empty">还没有租户注册。把门户地址发给同事即可自助注册。</div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (p, opts = {}) => {
+  const r = await fetch(p, { headers: { "Content-Type": "application/json" }, ...opts });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+};
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* gate */
+$("btn-gate-login").onclick = async () => {
+  $("gate-err").textContent = ""; $("gate-err").className = "msg err";
+  try {
+    await api("/api/admin/login", { method: "POST", body: JSON.stringify({ password: $("pw").value }) });
+    enter();
+  } catch (e) { $("gate-err").textContent = e.message; }
+};
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btn-gate-login").click(); });
+$("btn-logout").onclick = async () => { await api("/api/admin/logout", { method: "POST" }); location.reload(); };
+$("btn-open-portal").onclick = () => window.open("/", "_blank");
+
+async function enter() {
+  $("gate").classList.add("hidden");
+  $("shell").classList.remove("hidden");
+  await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp()]);
+}
+
+/* model */
+async function loadModel() {
+  const m = await api("/api/admin/model");
+  const provs = Object.entries(m.providers || {});
+  const kpis = [
+    { lbl: "租户数", val: "", n: null },
+    { lbl: "当前模型", val: m.main || "—", n: true },
+  ];
+  const first = provs[0];
+  if (first) {
+    const [id, p] = first;
+    $("pv-id").value = id;
+    $("pv-name").value = p.name || "";
+    $("pv-kind").value = p.kind || "anthropic";
+    $("pv-url").value = p.baseURL || "";
+    $("pv-models").value = Object.keys(p.models || {}).join(", ");
+    $("pv-main").value = m.main || "";
+    $("key-hint").textContent = p.hasKey ? "密钥已保存，留空即沿用" : "尚未设置密钥";
+    $("sync-state").textContent = `由 ${id} 下发`;
+  } else {
+    $("sync-state").textContent = "尚未配置";
+  }
+}
+$("btn-pv-save").onclick = async () => {
+  $("pv-err").textContent = ""; $("pv-ok").textContent = "";
+  try {
+    const r = await api("/api/me/provider", { method: "POST", body: JSON.stringify({
+      providerId: $("pv-id").value.trim(),
+      name: $("pv-name").value.trim(),
+      kind: $("pv-kind").value,
+      baseURL: $("pv-url").value.trim(),
+      apiKey: $("pv-key").value.trim() || undefined,
+      models: Object.fromEntries($("pv-models").value.split(",").map((s) => s.trim()).filter(Boolean).map((mm) => [mm, { name: mm }])),
+      main: $("pv-main").value.trim() || undefined,
+    })});
+    $("pv-ok").textContent = `已保存并推送到 ${r.pushed} 个租户`;
+    loadModel();
+  } catch (e) { $("pv-err").textContent = e.message; }
+};
+$("btn-pv-push").onclick = async () => {
+  $("pv-ok").textContent = "";
+  try {
+    const r = await api("/api/admin/push-model", { method: "POST", body: "{}" });
+    $("pv-ok").textContent = `重新推送完成：成功 ${r.pushed} · 跳过 ${r.failed}`;
+  } catch (e) { $("pv-err").textContent = e.message; }
+};
+
+/* ---------- 品牌与外观 ---------- */
+async function loadBranding() {
+  const b = await api("/api/branding");
+  $("br-name").value = b.appName || "";
+  $("br-logotext").value = b.logoText || "";
+  $("br-logourl").value = b.logoUrl || "";
+  $("br-tagline").value = b.tagline || "";
+  $("br-accent").value = b.accent || "";
+  $("br-css").value = b.customCSS || "";
+  $("skills-dir").textContent = "data/skills/";
+}
+$("btn-br-save").onclick = async () => {
+  $("br-err").textContent = ""; $("br-ok").textContent = "";
+  try {
+    await api("/api/admin/branding", { method: "POST", body: JSON.stringify({
+      appName: $("br-name").value, logoText: $("br-logotext").value,
+      logoUrl: $("br-logourl").value, tagline: $("br-tagline").value,
+      accent: $("br-accent").value, customCSS: $("br-css").value,
+    })});
+    $("br-ok").textContent = "已保存，租户端刷新即可看到";
+  } catch (e) { $("br-err").textContent = e.message; }
+};
+$("btn-br-reset").onclick = async () => {
+  $("br-err").textContent = ""; $("br-ok").textContent = "";
+  try {
+    await api("/api/admin/branding", { method: "POST", body: JSON.stringify({ appName: "", logoText: "", logoUrl: "", tagline: "", accent: "", customCSS: "" }) });
+    loadBranding();
+    $("br-ok").textContent = "已恢复默认";
+  } catch (e) { $("br-err").textContent = e.message; }
+};
+
+/* ---------- 企业全局技能 ---------- */
+async function loadSkills() {
+  const { skills } = await api("/api/admin/skills");
+  $("gsk-list").innerHTML = skills.length
+    ? `<table><thead><tr><th>技能</th><th class="num">文件数</th><th class="num">大小</th><th></th></tr></thead><tbody>${
+        skills.map((s) => `<tr>
+          <td><b>${esc(s.name)}</b></td>
+          <td class="num">${s.files}</td>
+          <td class="num">${s.size > 1024 ? (s.size / 1024).toFixed(1) + " KB" : s.size + " B"}</td>
+          <td class="num"><button class="ghost" data-del="${esc(s.name)}" style="padding:3px 10px;color:var(--negative);border-color:var(--negative)">删除</button></td>
+        </tr>`).join("")}</tbody></table>`
+    : `<div class="empty" style="padding:16px">还没有企业技能。上传一个 zip（根层含 SKILL.md）开始。</div>`;
+  $("gsk-list").querySelectorAll("[data-del]").forEach((btn) => btn.onclick = async () => {
+    if (!confirm(`删除技能 ${btn.dataset.del}？（同时从所有租户移除）`)) return;
+    await api(`/api/admin/skills/${btn.dataset.del}`, { method: "DELETE" });
+    loadSkills();
+  });
+}
+$("btn-gsk-upload").onclick = () => $("gsk-file").click();
+$("gsk-file").onchange = async () => {
+  const f = $("gsk-file").files[0];
+  if (!f) return;
+  const name = f.name.replace(/\.(zip|md)$/i, "").replace(/[^a-zA-Z0-9_-]/g, "-");
+  $("gsk-err").textContent = ""; $("gsk-ok").textContent = `上传 ${f.name} …`;
+  try {
+    const r = await fetch(`/api/admin/skills/upload?name=${encodeURIComponent(name)}`, { method: "POST", body: f });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error);
+    $("gsk-ok").textContent = `已完成：${j.name} 已注入 ${j.injected} 个租户`;
+  } catch (e) { $("gsk-err").textContent = e.message; }
+  $("gsk-file").value = "";
+  loadSkills();
+};
+$("btn-gsk-reinject").onclick = async () => {
+  const r = await api("/api/admin/skills/reinject", { method: "POST", body: "{}" });
+  $("gsk-ok").textContent = `已重新注入 ${r.injected} 个租户（${r.skills} 个技能）`;
+  loadSkills();
+};
+
+/* ---------- MCP ---------- */
+let mcpServers = {};
+let mcpEditing = null; // 正在编辑的 server id（null = 新增模式）
+
+async function loadMcp() {
+  const { servers } = await api("/api/admin/mcp");
+  mcpServers = servers || {};
+  renderMcp();
+}
+
+function mcpEntrySummary(s) {
+  if (s.command) return `command <code class="mono">${esc(s.command)} ${(s.args || []).join(" ").slice(0, 60)}</code>`;
+  const hdr = s.headers && Object.keys(s.headers).length ? ` · headers: ${Object.keys(s.headers).join(", ")}` : "";
+  return `url <code class="mono">${esc(s.url)}</code>${hdr}`;
+}
+
+function renderMcp() {
+  const ids = Object.keys(mcpServers);
+  $("mcp-list").innerHTML = ids.length
+    ? ids.map((id) => {
+        const s = mcpServers[id];
+        return `<div class="kv" data-mcp-row="${esc(id)}"><span class="k"><b>${esc(id)}</b> · ${mcpEntrySummary(s)}</span>
+          <span class="v" style="display:flex;gap:6px;justify-content:flex-end">
+            <button class="ghost" data-mcp-tools="${esc(id)}" style="padding:3px 10px">查看 tools</button>
+            <button class="ghost" data-mcp-edit="${esc(id)}" style="padding:3px 10px">编辑</button>
+            <button class="ghost" data-mcp-del="${esc(id)}" style="padding:3px 10px;color:var(--negative);border-color:var(--negative)">移除</button>
+          </span></div>
+          <div class="mcp-tools-box hidden" id="mcp-tools-${esc(id)}" style="margin:-4px 0 10px;padding:8px 12px;background:var(--raised);border-radius:6px;font-size:12.5px"></div>`;
+      }).join("")
+    : `<div class="empty" style="padding:14px">未配置 MCP。填下方表单添加（command 本地命令 或 url 远程服务，二选一）。</div>`;
+
+  $("mcp-list").querySelectorAll("[data-mcp-del]").forEach((btn) => btn.onclick = async () => {
+    if (!confirm(`移除 MCP「${btn.dataset.mcpDel}」并从所有租户删除？`)) return;
+    delete mcpServers[btn.dataset.mcpDel];
+    await pushMcp();
+    renderMcp();
+  });
+  $("mcp-list").querySelectorAll("[data-mcp-edit]").forEach((btn) => btn.onclick = () => startEditMcp(btn.dataset.mcpEdit));
+  $("mcp-list").querySelectorAll("[data-mcp-tools]").forEach((btn) => btn.onclick = () => showMcpTools(btn.dataset.mcpTools));
+}
+
+function startEditMcp(id) {
+  const s = mcpServers[id];
+  if (!s) return;
+  mcpEditing = id;
+  $("mcp-id").value = id;
+  $("mcp-id").disabled = true;
+  $("mcp-cmd").value = s.command || "";
+  $("mcp-args").value = s.args ? JSON.stringify(s.args) : "";
+  $("mcp-url").value = s.url || "";
+  $("mcp-headers").value = s.headers ? JSON.stringify(s.headers) : "";
+  $("mcp-env").value = s.env ? JSON.stringify(s.env) : "";
+  $("btn-mcp-add").textContent = "保存修改并推送全部租户";
+  $("btn-mcp-cancel").classList.remove("hidden");
+  $("mcp-ok").textContent = `正在编辑「${id}」`;
+  $("mcp-err").textContent = "";
+}
+
+function resetMcpForm() {
+  mcpEditing = null;
+  $("mcp-id").value = ""; $("mcp-id").disabled = false;
+  $("mcp-cmd").value = ""; $("mcp-args").value = ""; $("mcp-url").value = "";
+  $("mcp-headers").value = ""; $("mcp-env").value = "";
+  $("btn-mcp-add").textContent = "添加并推送全部租户";
+  $("btn-mcp-cancel").classList.add("hidden");
+  $("mcp-tools-result").innerHTML = "";
+}
+
+$("btn-mcp-cancel").onclick = () => { resetMcpForm(); $("mcp-ok").textContent = ""; };
+
+function readMcpForm() {
+  const entry = {};
+  if ($("mcp-cmd").value.trim()) entry.command = $("mcp-cmd").value.trim();
+  if ($("mcp-args").value.trim()) entry.args = JSON.parse($("mcp-args").value);
+  if ($("mcp-url").value.trim()) entry.url = $("mcp-url").value.trim();
+  if ($("mcp-headers").value.trim()) entry.headers = JSON.parse($("mcp-headers").value);
+  if ($("mcp-env").value.trim()) entry.env = JSON.parse($("mcp-env").value);
+  return entry;
+}
+
+function renderToolsResult(container, r) {
+  if (!r.ok) { container.innerHTML = `<span class="msg err" style="margin:0">探测失败：${esc(r.error || "未知错误")}</span>`; return; }
+  const tools = r.tools || [];
+  container.innerHTML = tools.length
+    ? `<div style="margin-bottom:4px"><b>${tools.length}</b> 个工具：</div>` + tools.map((t) => `<div class="kv" style="border-bottom:0;padding:3px 0"><span class="k mono">${esc(t.name)}</span><span class="v" style="max-width:65%;color:var(--muted);font-size:12px">${esc(t.description || "")}</span></div>`).join("")
+    : `<span class="msg ok" style="margin:0">连接成功，但该服务器没有暴露工具。</span>`;
+}
+
+async function showMcpTools(id) {
+  const box = $(`mcp-tools-${id}`);
+  box.classList.remove("hidden");
+  box.innerHTML = "探测中…";
+  const r = await api("/api/admin/mcp/probe", { method: "POST", body: JSON.stringify({ server: mcpServers[id] }) });
+  renderToolsResult(box, r);
+}
+
+async function pushMcp() {
+  const r = await api("/api/admin/mcp", { method: "POST", body: JSON.stringify({ servers: mcpServers }) });
+  $("mcp-ok").textContent = `已推送 ${r.count} 个 MCP 到 ${r.pushed} 个租户`;
+  setTimeout(() => { if (!$("mcp-ok").textContent.includes("已推送")) return; $("mcp-ok").textContent = ""; }, 4000);
+}
+
+$("btn-mcp-test").onclick = async () => {
+  $("mcp-err").textContent = ""; $("mcp-ok").textContent = "";
+  try {
+    const entry = readMcpForm();
+    $("mcp-tools-result").innerHTML = "探测中…";
+    const r = await api("/api/admin/mcp/probe", { method: "POST", body: JSON.stringify({ server: entry }) });
+    renderToolsResult($("mcp-tools-result"), r);
+  } catch (e) { $("mcp-err").textContent = e.message; }
+};
+
+$("btn-mcp-add").onclick = async () => {
+  $("mcp-err").textContent = ""; $("mcp-ok").textContent = "";
+  const id = $("mcp-id").value.trim();
+  try {
+    if (!/^[a-zA-Z0-9_-]{1,40}$/.test(id)) throw new Error("名称需为 1-40 位字母数字_-");
+    const entry = readMcpForm();
+    const test = { servers: { ...mcpServers, [id]: entry } };
+    await api("/api/admin/mcp", { method: "POST", body: JSON.stringify(test) });
+    mcpServers = test.servers;
+    const wasEditing = Boolean(mcpEditing);
+    resetMcpForm();
+    renderMcp();
+    $("mcp-ok").textContent = wasEditing ? `「${id}」已更新并推送全部租户` : `「${id}」已添加并推送全部租户`;
+  } catch (e) { $("mcp-err").textContent = e.message; }
+};
+
+/* users */
+async function loadUsers() {
+  const { users } = await api("/api/admin/users");
+  $("user-note").textContent = users.length ? `${users.length} 人` : "";
+  $("user-empty").classList.toggle("hidden", users.length > 0);
+  $("user-rows").innerHTML = users.map((u) => `<tr>
+    <td><b>${esc(u.username)}</b></td>
+    <td>${esc(u.displayName || "—")}</td>
+    <td class="mono">${esc(u.uid.slice(0, 10))}…</td>
+    <td class="num">${u.hasHome ? '<span class="pill ok">已初始化</span>' : '<span class="pill">未初始化</span>'}</td>
+    <td class="num" style="color:var(--muted)">${new Date(u.created).toLocaleString("zh-CN", { hour12: false })}</td>
+    <td class="num"><button class="ghost" data-reset="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">重置密码</button></td>
+  </tr>`).join("");
+  $("user-rows").querySelectorAll("[data-reset]").forEach((btn) => btn.onclick = async () => {
+    const np = prompt(`为 ${btn.dataset.name} 设置新密码（至少 6 位）：`);
+    if (!np) return;
+    try {
+      await api("/api/admin/reset-password", { method: "POST", body: JSON.stringify({ uid: btn.dataset.reset, newPassword: np }) });
+      alert(`已完成：${btn.dataset.name} 的密码已重置`);
+    } catch (e) { alert("失败: " + e.message); }
+  });
+}
+
+api("/api/admin/model").then(enter).catch(() => { /* 未登录 */ });
+</script>
+</body>
+</html>
