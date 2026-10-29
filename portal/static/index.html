@@ -452,6 +452,11 @@ function renderTurn(t) { $("chat").appendChild(buildTurn(t)); $("chat").scrollTo
 
 /* ---------- chat ---------- */
 function killEmpty() { const e = $("chat-empty"); if (e) e.remove(); }
+function autoScroll() {
+  const el = $("chat");
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  if (nearBottom) el.scrollTop = el.scrollHeight;
+}
 function addMsg(role, text, files) {
   killEmpty();
   const div = document.createElement("div");
@@ -538,7 +543,6 @@ function addToolIcon(bubble, name, brief, detail, callId) {
   btn.innerHTML = toolIconSvg(name);
   btn.onclick = () => toggleToolDetail(bubble, bar, idx, btn);
   bar.appendChild(btn);
-  $("chat").scrollTop = 1e9;
 }
 function toggleToolDetail(bubble, bar, idx, btn) {
   const items = JSON.parse(bar.dataset.items || "[]");
@@ -554,7 +558,6 @@ function toggleToolDetail(bubble, bar, idx, btn) {
   det.dataset.idx = String(idx);
   det.textContent = `${item.name}${item.brief ? " — " + item.brief : ""}\n\n${item.detail || ""}`.trim();
   bar.after(det);
-  $("chat").scrollTop = 1e9;
 }
 /* ---------- Markdown 渲染（零依赖，先转义再转换） ---------- */
 function escapeHtml(s) {
@@ -690,21 +693,21 @@ async function sendMsg() {
             // 思考完成后改标签
             const lbl = bubble.querySelector(".think-label");
             if (lbl && lbl.textContent.startsWith("思考 ·")) lbl.textContent = "已思考";
-            $("chat").scrollTop = 1e9;
+            autoScroll();
           } else {
             const p = ev.payload || {};
             if (ev.type === "model.streaming" && p.kind === "reasoning_delta" && p.delta) {
               appendThink(bubble, p.delta);
               if (!thinkOpen) bubble.querySelector("details.think").open = false; // 保持折叠直到用户点开
-              $("chat").scrollTop = 1e9;
+              autoScroll();
             } else if (ev.type === "model.streaming" && p.kind === "text_delta" && p.delta) {
               acc += p.delta;
               const lbl = bubble.querySelector(".think-label");
               if (lbl && lbl.textContent.startsWith("思考 ·")) lbl.textContent = "已思考";
               setOut(acc);
-              $("chat").scrollTop = 1e9;
+              autoScroll();
             } else if (ev.type === "session.updated" && p.content !== undefined) {
-              acc = p.content; setOut(acc); $("chat").scrollTop = 1e9;
+              acc = p.content; setOut(acc); autoScroll();
             } else if (ev.type === "tool.execution" || ev.type === "tool_execution" || ev.type === "tool.execution_start" || ev.type === "tool_call") {
               const name = p.toolName || p.name || p.tool || "tool";
               const brief = typeof p.input === "string" ? p.input.slice(0, 90)
