@@ -371,7 +371,7 @@ async function loadWorkspaces() {
     if (w === state.ws) {
       inner += sessions.length
         ? sessions.map((s2) => `<div class="sess-item ${s2.id === state.sessionId ? "on" : ""}" data-sess="${esc(s2.id)}" title="${esc(s2.title || s2.id)}">
-            <span class="dot"></span><span class="t">${esc(s2.title || s2.id.slice(0, 18) + "…")}</span>
+            ${s2.id === state.sessionId ? '<span class="dot"></span>' : ''}<span class="t">${esc(s2.title || s2.id.slice(0, 18) + "…")}</span>
             <a class="del" data-sess-del="${esc(s2.id)}" title="删除会话">×</a></div>`).join("")
         : `<div class="sess-empty">暂无会话</div>`;
     }
