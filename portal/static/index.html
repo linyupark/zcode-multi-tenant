@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>ZCode 门户</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -53,7 +53,7 @@ button.stopping{background:var(--negative);color:#fff;border-color:var(--negativ
 /* ---------- L框 + 白纸壳 ---------- */
 #app{display:grid;grid-template-columns:228px 1fr;grid-template-rows:48px 1fr;height:100vh}
 #topbar{grid-column:2;background:var(--ground);display:flex;align-items:center;gap:12px;padding:0 var(--pad)}
-#topbar .crumb{color:var(--muted)}
+#topbar .crumb{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #topbar .crumb b{color:var(--text);font-weight:500}
 #topbar select{width:auto;padding:4px 8px;font-size:13px}
 #topbar .spacer{flex:1}
@@ -181,14 +181,63 @@ button.stopping{background:var(--negative);color:#fff;border-color:var(--negativ
 #fp-img{max-width:100%;max-height:300px;border-radius:var(--radius-card)}
 #fp-text{max-height:300px;overflow:auto;background:var(--raised);border-radius:var(--radius-card);padding:12px;font-family:"IBM Plex Mono",monospace;font-size:12px;white-space:pre-wrap}
 
+/* ---------- 移动端抽屉（桌面端隐藏） ---------- */
+#btn-menu{display:none;width:38px;height:38px;padding:0;place-items:center;flex:0 0 auto;color:var(--text)}
+#btn-menu:hover{background:var(--raised)}
+.drawer-head{display:flex;align-items:center}
+.drawer-head .brand{flex:1;min-width:0}
+#btn-drawer-close{display:none;width:36px;height:36px;padding:0;place-items:center;flex:0 0 auto;color:var(--muted)}
+#drawer-overlay{display:none}
+.mobile-mode{display:none}
+
 @media(max-width:768px){
-  #app{grid-template-columns:1fr;grid-template-rows:48px auto 1fr}
-  #sidebar{grid-row:2;flex-direction:row;overflow-x:auto;padding:8px 12px;gap:4px;align-items:center}
-  #sidebar .brand{padding:0 8px 0 0}
-  .nav-sec,#sidebar .foot{display:none}
-  #sheet{grid-column:1;grid-row:3;margin:0 8px 8px;border-radius:var(--radius-sheet) var(--radius-sheet) 0 0}
-  #topbar{grid-column:1}
-  .panel .card{width:100%}
+  #app{grid-template-columns:1fr;grid-template-rows:52px 1fr;height:var(--app-h,100vh);height:var(--app-h,100dvh)}
+  #btn-menu{display:grid;width:40px;height:40px}
+  #topbar{grid-column:1;grid-row:1;padding:0 10px;gap:8px;background:var(--surface);border-bottom:1px solid var(--border)}
+  #topbar .crumb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
+  #topbar .crumb-prefix{display:none}
+  #topbar .spacer{display:none}
+  #topbar select{display:none}
+  #sidebar{position:fixed;top:0;bottom:0;left:0;width:min(88vw,340px);z-index:80;transform:translateX(-105%);transition:transform .22s ease;padding:10px 12px calc(12px + env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;box-shadow:0 0 40px rgba(19,20,22,.18);grid-row:auto;grid-column:auto}
+  body.drawer-open #sidebar{transform:translateX(0)}
+  body.drawer-open #drawer-overlay{display:block;position:fixed;inset:0;z-index:70;background:rgba(19,20,22,.42)}
+  #btn-drawer-close{display:grid}
+  .drawer-head .brand{padding:2px 6px 14px}
+  .mobile-mode{display:block;padding:4px 4px 0}
+  .mobile-mode select{font-size:16px;padding:9px 10px}
+  #sidebar .nav-sec{display:block;padding:14px 10px 5px}
+  #sidebar .foot{display:block}
+  .nav-item{min-height:42px;font-size:14px;padding:9px 10px}
+  .sess-item{min-height:40px;font-size:13.5px;padding:9px 10px}
+  .sess-item .del{opacity:1;padding:6px 10px;margin:-6px -6px -6px 0;font-size:15px}
+  #sheet{grid-column:1;grid-row:2;margin:0;border:0;border-radius:0;min-height:0;height:100%}
+  #chat{padding:14px 12px;gap:12px}
+  .msg-row.user .bubble{max-width:88%}
+  .msg-row.assistant .bubble{border-radius:3px 12px 12px 12px}
+  .msg-row .bubble{font-size:14.5px;padding:9px 12px}
+  .tool-icon{width:34px;height:34px;min-width:34px}
+  #attach-bar{padding:8px 12px}
+  .composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+  .composer textarea{min-height:48px;font-size:16px;padding:10px 12px;resize:none}
+  .composer .bar{gap:8px;margin-top:8px}
+  .composer .bar button{min-height:40px;padding:8px 14px}
+  #status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #gate{padding:20px 16px calc(20px + env(safe-area-inset-bottom));height:var(--app-h,100dvh);min-height:0;overflow-y:auto}
+  #gate .box{width:100%;max-width:420px;padding:24px;border-radius:16px}
+  input,select,textarea{font-size:16px}
+  .panel{padding:0;align-items:flex-end;height:var(--app-h,100dvh)}
+  .panel .card{width:100%!important;max-width:none;max-height:calc(var(--app-h,100dvh) - 20px);border-radius:18px 18px 0 0;border-bottom:0;padding:18px 16px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -10px 36px rgba(0,0,0,.18)}
+  .panel .card::before{content:"";display:block;width:36px;height:4px;border-radius:99px;background:var(--control);margin:-6px auto 14px}
+  #file-tree{max-height:38vh}
+  #fp-img{max-height:32vh}
+  #fp-text{max-height:32vh;font-size:12px}
+  .btn-row{gap:8px}
+  .btn-row button{min-height:40px}
+  .kv{font-size:13px}
+  .kv .v{min-width:0;overflow-wrap:anywhere}
+}
+@media(hover:none){
+  .sess-item .del{opacity:1}
 }
 </style>
 </head>
@@ -222,33 +271,50 @@ button.stopping{background:var(--negative);color:#fff;border-color:var(--negativ
 <!-- 主界面 -->
 <div id="app" class="hidden">
   <div id="topbar">
-    <span class="crumb">工作区 / <b id="cur-ws">—</b></span>
+    <button class="ghost" id="btn-menu" aria-label="打开菜单" aria-controls="sidebar" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <span class="crumb"><span class="crumb-prefix">工作区 / </span><b id="cur-ws">—</b></span>
     <span class="spacer"></span>
     <select id="mode" title="权限模式：控制 AI 能对工作区做什么">
       <option value="yolo">自动执行 · 可写入工作区</option>
       <option value="plan">只读规划 · 不改文件</option>
       <option value="guarded">谨慎模式 · 高危操作需确认</option>
     </select>
-    <button class="ghost" id="btn-new">新会话</button>
   </div>
   <div id="sidebar">
-    <div class="brand"><span class="mark">Z</span><span><span class="name">ZCode 门户</span></span></div>
+    <div class="drawer-head">
+      <div class="brand"><span class="mark">Z</span><span><span class="name">ZCode 门户</span></span></div>
+      <button class="ghost" id="btn-drawer-close" aria-label="关闭菜单">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
     <div class="nav-sec">工作区</div>
+    <a class="nav-item" id="btn-new">新会话</a>
     <div id="ws-list"></div>
     <div class="nav-sec">资源</div>
     <a class="nav-item" id="btn-files">工作区文件</a>
     <a class="nav-item" id="btn-skills">技能一览</a>
     <a class="nav-item" id="btn-model">模型信息</a>
+    <div class="mobile-mode">
+      <div class="nav-sec">权限模式</div>
+      <select id="mode-m" aria-label="权限模式">
+        <option value="yolo">自动执行 · 可写入工作区</option>
+        <option value="plan">只读规划 · 不改文件</option>
+        <option value="guarded">谨慎模式 · 高危操作需确认</option>
+      </select>
+    </div>
     <div class="nav-sec">账号</div>
     <a class="nav-item" id="btn-passwd">修改密码</a>
     <a class="nav-item" id="btn-logout">退出登录</a>
     <div class="foot" id="whoami"></div>
   </div>
+  <div id="drawer-overlay"></div>
   <div id="sheet">
     <div id="chat">
       <div class="chat-empty" id="chat-empty">
         <div class="big">开始你的第一个任务</div>
-        <div>输入需求，Enter 或 Ctrl+Enter 发送；需要处理文件时用 附件</div>
+        <div>输入需求后点发送；需要处理文件时用「附件」</div>
       </div>
     </div>
     <div id="attach-bar" class="hidden"></div>
@@ -330,8 +396,51 @@ const api = async (p, opts = {}) => {
   return j;
 };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-let state = { me: null, ws: null, sessionId: null };
+let state = { me: null, ws: null, sessionId: null, sessionTitle: null, soloDefault: false };
 let pendingAtts = [];
+
+/* ---------- 移动端抽屉 / 软键盘视口 ---------- */
+const drawerOpen = () => document.body.classList.contains("drawer-open");
+function openDrawer() {
+  document.body.classList.add("drawer-open");
+  $("btn-menu").setAttribute("aria-expanded", "true");
+}
+function closeDrawer() {
+  document.body.classList.remove("drawer-open");
+  $("btn-menu").setAttribute("aria-expanded", "false");
+}
+$("btn-menu").onclick = () => (drawerOpen() ? closeDrawer() : openDrawer());
+$("btn-drawer-close").onclick = closeDrawer;
+$("drawer-overlay").onclick = closeDrawer;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && drawerOpen()) closeDrawer(); });
+
+function syncAppHeight() {
+  const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  document.documentElement.style.setProperty("--app-h", Math.round(h) + "px");
+}
+syncAppHeight();
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", syncAppHeight);
+  visualViewport.addEventListener("scroll", syncAppHeight);
+}
+window.addEventListener("resize", () => {
+  syncAppHeight();
+  if (window.innerWidth > 768 && drawerOpen()) closeDrawer();
+});
+window.addEventListener("orientationchange", () => setTimeout(syncAppHeight, 120));
+
+/* 权限模式：桌面顶栏与移动抽屉里的下拉双向同步 */
+$("mode").addEventListener("change", () => { $("mode-m").value = $("mode").value; });
+$("mode-m").addEventListener("change", () => {
+  $("mode").value = $("mode-m").value;
+  $("status").textContent = "权限模式已切换，下条消息生效";
+  closeDrawer();
+});
+function syncInputHint() {
+  $("input").placeholder = window.matchMedia("(max-width:768px)").matches ? "描述你的任务…" : "描述你的任务…（Ctrl+Enter 发送）";
+}
+syncInputHint();
+window.addEventListener("resize", syncInputHint);
 
 /* ---------- auth ---------- */
 $("tab-login").onclick = () => { $("tab-login").classList.add("on"); $("tab-register").classList.remove("on"); $("login-form").classList.remove("hidden"); $("register-form").classList.add("hidden"); };
@@ -359,17 +468,34 @@ async function loadMe() {
   const me = await api("/api/me");
   state.me = { ...state.me, ...me };
   $("mode").value = me.mode || "plan";
+  $("mode-m").value = me.mode || "plan";
+}
+/* 顶部面包屑：会话激活时显示「工作区 / 会话标题」，否则显示「工作区 / 工作区名」 */
+function renderCrumb() {
+  const prefix = document.querySelector("#topbar .crumb-prefix");
+  if (state.sessionId) {
+    prefix.textContent = "工作区 / ";
+    $("cur-ws").textContent = state.sessionTitle || "新会话";
+  } else if (state.soloDefault) {
+    prefix.textContent = "";
+    $("cur-ws").textContent = "工作区";
+  } else {
+    prefix.textContent = "工作区 / ";
+    $("cur-ws").textContent = state.ws;
+  }
 }
 async function loadWorkspaces() {
   const { workspaces } = await api("/api/workspaces");
   if (!workspaces.length) await api("/api/workspaces", { method: "POST", body: JSON.stringify({ name: "default" }) }).catch(() => {});
   const list = workspaces.length ? workspaces : ["default"];
   state.ws = state.ws && list.includes(state.ws) ? state.ws : list[0];
+  // 只有一个 default 工作区时，把工作区层视为隐式容器，不渲染可点击的 default 行
+  state.soloDefault = list.length === 1 && list[0] === "default";
   // 当前工作区的会话列表
   const { sessions } = await api(`/api/sessions?ws=${encodeURIComponent(state.ws)}`);
   $("ws-list").innerHTML = list.map((w) => {
     const wsActive = w === state.ws && !state.sessionId; // 选中会话时，工作区不再高亮
-    let inner = `<a class="nav-item ${wsActive ? "on" : ""}" data-ws="${esc(w)}">${wsActive ? '<span class="dot"></span>' : ''}${esc(w)}</a>`;
+    let inner = state.soloDefault ? "" : `<a class="nav-item ${wsActive ? "on" : ""}" data-ws="${esc(w)}">${wsActive ? '<span class="dot"></span>' : ''}${esc(w)}</a>`;
     if (w === state.ws) {
       inner += sessions.length
         ? sessions.map((s2) => `<div class="sess-item ${s2.id === state.sessionId ? "on" : ""}" data-sess="${esc(s2.id)}" title="${esc(s2.title || s2.id)}">
@@ -379,14 +505,19 @@ async function loadWorkspaces() {
     }
     return inner;
   }).join("");
-  $("cur-ws").textContent = state.ws;
+  const active = state.sessionId ? sessions.find((s2) => s2.id === state.sessionId) : null;
+  if (active) state.sessionTitle = active.title || state.sessionTitle;
+  $("btn-new").classList.toggle("on", !state.sessionId);
+  $("btn-new").innerHTML = `${state.sessionId ? "" : '<span class="dot"></span>'}新会话`;
+  renderCrumb();
 }
 function clearChat() {
-  $("chat").innerHTML = `<div class="chat-empty" id="chat-empty"><div class="big">${esc(state.ws)}</div><div>输入需求开始新会话</div></div>`;
+  $("chat").innerHTML = `<div class="chat-empty" id="chat-empty"><div class="big">${esc(state.soloDefault ? "新会话" : state.ws)}</div><div>输入需求开始新会话</div></div>`;
 }
 let replayLoading = false;
 async function switchWs(ws, sessionId, opts = {}) {
-  state.ws = ws; state.sessionId = sessionId;
+  state.ws = ws; state.sessionId = sessionId; state.sessionTitle = sessionId ? (opts.title || null) : null;
+  renderCrumb();
   pendingAtts = []; renderAttachBar();
   if (sessionId && !opts.skipReplay) {
     replayLoading = true;
@@ -697,7 +828,7 @@ async function sendMsg() {
         if (!evLine) continue;
         const ev = JSON.parse(evLine.slice(6));
         if (evName === "cli") {
-          if (ev.sessionId) state.sessionId = ev.sessionId;
+          if (ev.sessionId) { if (state.sessionId !== ev.sessionId) state.sessionTitle = null; state.sessionId = ev.sessionId; renderCrumb(); }
           if (ev.type === "result") {
             clearLoading();
             acc = ev.response || acc;
@@ -768,7 +899,7 @@ async function sendMsg() {
 }
 $("btn-send").onclick = sendMsg;
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMsg(); });
-$("btn-new").onclick = () => { switchWs(state.ws, null); $("status").textContent = "新会话"; };
+$("btn-new").onclick = () => { closeDrawer(); switchWs(state.ws, null); $("status").textContent = "新会话"; };
 
 /* ---------- 附件 ---------- */
 $("btn-attach").onclick = () => $("file-input").click();
@@ -796,6 +927,7 @@ function renderAttachBar() {
 
 /* ---------- 模型信息（只读） ---------- */
 $("btn-model").onclick = async () => {
+  closeDrawer();
   const me = await api("/api/me");
   const provs = Object.entries(me.providers || {});
   $("model-info").innerHTML = provs.length
@@ -810,7 +942,7 @@ $("btn-model").onclick = async () => {
 $("btn-pv-close").onclick = () => $("panel-model").classList.add("hidden");
 
 /* ---------- 技能 ---------- */
-$("btn-skills").onclick = async () => { await refreshSkills(); $("panel-skills").classList.remove("hidden"); };
+$("btn-skills").onclick = async () => { closeDrawer(); await refreshSkills(); $("panel-skills").classList.remove("hidden"); };
 async function refreshSkills() {
   const { skills } = await api(`/api/skills?ws=${encodeURIComponent(state.ws)}`);
   const tag = { global: "全局 · 管理员", project: "当前工作区" };
@@ -889,7 +1021,7 @@ function previewFile(rel) {
       });
   }
 }
-$("btn-files").onclick = openFiles;
+$("btn-files").onclick = () => { closeDrawer(); openFiles(); };
 $("btn-files-close").onclick = () => $("panel-files").classList.add("hidden");
 $("btn-fp-close").onclick = () => $("file-preview").classList.add("hidden");
 $("btn-fp-download").onclick = () => {
@@ -923,7 +1055,7 @@ function applyBranding(b) {
 }
 
 /* ---------- 修改密码 ---------- */
-$("btn-passwd").onclick = () => { $("pw-err").textContent = ""; $("pw-ok").textContent = ""; $("pw-cur").value = $("pw-new").value = $("pw-new2").value = ""; $("panel-passwd").classList.remove("hidden"); };
+$("btn-passwd").onclick = () => { closeDrawer(); $("pw-err").textContent = ""; $("pw-ok").textContent = ""; $("pw-cur").value = $("pw-new").value = $("pw-new2").value = ""; $("panel-passwd").classList.remove("hidden"); };
 $("btn-pw-close").onclick = () => $("panel-passwd").classList.add("hidden");
 $("btn-pw-save").onclick = async () => {
   $("pw-err").textContent = ""; $("pw-ok").textContent = "";
@@ -950,9 +1082,9 @@ $("ws-list").addEventListener("click", async (e) => {
     return;
   }
   const sessEl = e.target.closest("div.sess-item");
-  if (sessEl) { switchWs(state.ws, sessEl.dataset.sess); return; }
+  if (sessEl) { closeDrawer(); switchWs(state.ws, sessEl.dataset.sess, { title: sessEl.querySelector(".t")?.textContent?.trim() || "" }); return; }
   const wsEl = e.target.closest(".nav-item[data-ws]");
-  if (wsEl) { switchWs(wsEl.dataset.ws, null); return; }
+  if (wsEl) { closeDrawer(); switchWs(wsEl.dataset.ws, null); return; }
 });
 
 /* ---------- boot ---------- */
