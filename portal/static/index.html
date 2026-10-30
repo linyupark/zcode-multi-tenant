@@ -364,7 +364,8 @@ async function loadWorkspaces() {
   // 当前工作区的会话列表
   const { sessions } = await api(`/api/sessions?ws=${encodeURIComponent(state.ws)}`);
   $("ws-list").innerHTML = list.map((w) => {
-    let inner = `<a class="nav-item ${w === state.ws ? "on" : ""}" data-ws="${esc(w)}"><span class="dot"></span>${esc(w)}</a>`;
+    const wsActive = w === state.ws && !state.sessionId; // 选中会话时，工作区不再高亮
+    let inner = `<a class="nav-item ${wsActive ? "on" : ""}" data-ws="${esc(w)}"><span class="dot"></span>${esc(w)}</a>`;
     if (w === state.ws) {
       inner += sessions.length
         ? sessions.map((s2) => `<div class="sess-item ${s2.id === state.sessionId ? "on" : ""}" data-sess="${esc(s2.id)}" title="${esc(s2.title || s2.id)}">
@@ -726,6 +727,7 @@ async function sendMsg() {
           $("status").textContent = "已切换备用模型…";
         } else if (evName === "end") {
           $("status").textContent = ev.code === 0 ? "完成" : (`退出码 ${ev.code}` + (ev.error ? "：" + String(ev.error).slice(0, 80) : ""));
+          if (ev.sessionId) { state.sessionId = ev.sessionId; loadWorkspaces().catch(() => {}); } // 刷新侧栏并高亮当前会话
           ended = true;
         } else if (evName === "error") {
           $("status").textContent = "错误: " + ev.message;
