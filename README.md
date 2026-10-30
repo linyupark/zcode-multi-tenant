@@ -51,6 +51,8 @@ ADMIN_PASSWORD=youradmin PORT=9900 node portal/server.mjs
 # 4. 管理员：浏览器打开 http://localhost:9900/admin → 用 ADMIN_PASSWORD 登录
 #    → 「全局模型配置」填 provider（Z.ai Coding Plan: kind=anthropic,
 #      baseURL=https://open.bigmodel.cn/api/anthropic）→ 保存即推送给全部租户
+#    模型列表逐行配置：每个模型可单独设置上下文窗口、最大输出、视觉/PDF/视频输入、
+#    思考等级（逗号分隔，最后一级为默认）；首行为默认模型，其余按顺序失效回退。
 ```
 
 ## 内核升级（官方发新版后）

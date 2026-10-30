@@ -79,6 +79,33 @@ tbody tr:last-child td{border-bottom:0}
 tbody tr:hover{background:var(--raised)}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px}
+/* 模型逐行配置 */
+.mdl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-card)}
+.mdl-table{width:100%;min-width:890px;table-layout:fixed}
+.mdl-table th{padding:7px 6px;white-space:nowrap;border-bottom:1px solid var(--border)}
+.mdl-table td{padding:7px 6px;border-bottom:1px solid var(--rule)}
+.mdl-table th:nth-child(1){width:30px}
+.mdl-table th:nth-child(2){width:160px}
+.mdl-table th:nth-child(3){width:110px}
+.mdl-table th:nth-child(4),.mdl-table th:nth-child(5){width:86px}
+.mdl-table th:nth-child(6),.mdl-table th:nth-child(7),.mdl-table th:nth-child(8){width:66px}
+.mdl-table th:nth-child(9){width:160px}
+.mdl-table th:nth-child(10){width:106px}
+.mdl-table tbody tr:last-child td{border-bottom:0}
+.mdl-table tbody tr:hover{background:transparent}
+.mdl-table input[type=text],.mdl-table input[type=number]{padding:6px 8px;font-size:12.5px}
+.mdl-table input[type=number]{text-align:right;font-variant-numeric:tabular-nums;appearance:textfield;-moz-appearance:textfield}
+.mdl-table input[type=number]::-webkit-outer-spin-button,
+.mdl-table input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.mdl-table input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;display:block;margin:0 auto}
+.mdl-table select{padding:6px 4px;font-size:12px}
+.mdl-table td.idx{color:var(--muted);font-family:"IBM Plex Mono",monospace;font-size:12px;text-align:center}
+.mdl-table td.ck{text-align:center}
+.mdl-table .row-ops{display:flex;gap:4px;justify-content:flex-end}
+.mdl-table .row-ops button{padding:3px 6px;font-size:12px;background:var(--surface);color:var(--text);border:1px solid var(--control);font-weight:400;white-space:nowrap;flex:none}
+.mdl-table .row-ops button:hover{background:var(--raised)}
+.mdl-table .row-ops button.del{color:var(--negative)}
+.mdl-table tr.first td{background:#fbfdfd}
 .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:99px;background:var(--pill-neutral-bg);color:var(--pill-neutral-ink)}
 .pill.ok{background:var(--pill-positive-bg);color:var(--pill-positive-ink)}
 /* 登录门 */
@@ -158,10 +185,32 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
             <div class="field"><label>API Key</label><input id="pv-key" type="password" placeholder="留空 = 沿用已保存的">
               <div class="hint" id="key-hint"></div>
             </div>
-            <div class="field"><label>默认模型（全名）</label><input id="pv-main" placeholder="team-glm/glm-5.3"></div>
           </div>
         </div>
-        <div class="field" style="margin-bottom:6px"><label>模型列表（逗号分隔 · 第一个为默认，其余按顺序作为失效回退）</label><input id="pv-models" placeholder="glm-5.3, glm-5-turbo"></div>
+        <div class="field" style="margin-bottom:6px">
+          <label>模型（首行为默认模型，其余按顺序作为失效回退；每个模型单独配置能力）</label>
+          <div class="mdl-wrap">
+            <table class="mdl-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>模型 ID</th>
+                  <th>显示名</th>
+                  <th>上下文</th>
+                  <th>最大输出</th>
+                  <th>视觉</th>
+                  <th>PDF</th>
+                  <th>视频</th>
+                  <th>思考等级</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="pv-model-rows"></tbody>
+            </table>
+          </div>
+          <div class="btn-row" style="margin-top:10px"><button class="ghost" id="btn-add-model" type="button">添加模型</button></div>
+          <div class="hint">上下文 / 最大输出留空 = 跟随内核默认。视觉 / PDF / 视频默认「默认」= 按模型名推断；选「支持 / 不支持」可显式覆盖。思考等级逗号分隔（如 <code class="mono">disabled, high, max</code>），最后一级为默认；留空 = 跟随内核默认。</div>
+        </div>
         <div class="msg err" id="pv-err"></div>
         <div class="msg ok" id="pv-ok"></div>
         <div class="hint">推送是全量覆盖：每个租户下一次启动会话时即使用新模型，正在运行的会话不受影响。</div>
@@ -275,6 +324,82 @@ async function enter() {
 }
 
 /* model */
+function modelRowHtml(m = {}) {
+  const tri = (v) => `<option value=""${v === undefined ? " selected" : ""}>默认</option><option value="1"${v === true ? " selected" : ""}>支持</option><option value="0"${v === false ? " selected" : ""}>不支持</option>`;
+  return `<tr>
+    <td class="idx"></td>
+    <td><input type="text" class="m-id" value="${esc(m.id || "")}" placeholder="glm-5.3"></td>
+    <td><input type="text" class="m-name" value="${esc(m.name || "")}" placeholder="可选"></td>
+    <td><input type="number" class="m-ctx" min="1" step="1" value="${m.contextWindow ?? ""}" placeholder="200000"></td>
+    <td><input type="number" class="m-out" min="1" step="1" value="${m.maxOutputTokens ?? ""}" placeholder="64000"></td>
+    <td class="ck"><select class="m-img" title="图片输入">${tri(m.supportsImages)}</select></td>
+    <td class="ck"><select class="m-pdf" title="PDF 输入">${tri(m.supportsPdf)}</select></td>
+    <td class="ck"><select class="m-video" title="视频输入">${tri(m.supportsVideo)}</select></td>
+    <td><input type="text" class="m-levels" value="${esc((m.reasoningLevels || []).join(", "))}" placeholder="disabled, high, max"></td>
+    <td><div class="row-ops"><button type="button" class="mv-up" title="上移">↑</button><button type="button" class="mv-down" title="下移">↓</button><button type="button" class="del" title="移除">移除</button></div></td>
+  </tr>`;
+}
+function refreshModelRows() {
+  const rows = [...$("pv-model-rows").querySelectorAll("tr")];
+  rows.forEach((tr, i) => {
+    tr.querySelector(".idx").textContent = i + 1;
+    tr.classList.toggle("first", i === 0);
+    tr.querySelector(".mv-up").disabled = i === 0;
+    tr.querySelector(".mv-down").disabled = i === rows.length - 1;
+  });
+}
+function renderModelRows(list) {
+  $("pv-model-rows").innerHTML = (list.length ? list : [{}]).map(modelRowHtml).join("");
+  refreshModelRows();
+}
+$("pv-model-rows").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const tr = btn.closest("tr");
+  if (btn.classList.contains("del")) {
+    tr.remove();
+    if (!$("pv-model-rows").querySelector("tr")) $("pv-model-rows").innerHTML = modelRowHtml({});
+  } else if (btn.classList.contains("mv-up") && tr.previousElementSibling) {
+    tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+  } else if (btn.classList.contains("mv-down") && tr.nextElementSibling) {
+    tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+  }
+  refreshModelRows();
+});
+$("btn-add-model").onclick = () => {
+  $("pv-model-rows").insertAdjacentHTML("beforeend", modelRowHtml({}));
+  refreshModelRows();
+};
+function readModelRows() {
+  const list = [...$("pv-model-rows").querySelectorAll("tr")].map((tr) => {
+    const num = (sel) => {
+      const v = tr.querySelector(sel).value.trim();
+      if (v === "") return null;
+      const n = Number(v);
+      return Number.isInteger(n) && n > 0 ? n : NaN;
+    };
+    const tri = (sel) => {
+      const v = tr.querySelector(sel).value;
+      return v === "" ? undefined : v === "1";
+    };
+    return {
+      id: tr.querySelector(".m-id").value.trim(),
+      name: tr.querySelector(".m-name").value.trim(),
+      contextWindow: num(".m-ctx"),
+      maxOutputTokens: num(".m-out"),
+      supportsImages: tri(".m-img"),
+      supportsPdf: tri(".m-pdf"),
+      supportsVideo: tri(".m-video"),
+      reasoningLevels: tr.querySelector(".m-levels").value.split(",").map((s) => s.trim()).filter(Boolean),
+    };
+  });
+  if (!list.length) throw new Error("至少配置一个模型");
+  if (list.some((m) => !m.id)) throw new Error("模型 ID 不能为空");
+  const dup = list.map((m) => m.id).find((id, i, arr) => arr.indexOf(id) !== i);
+  if (dup) throw new Error(`模型 ID 重复：${dup}`);
+  if (list.some((m) => [m.contextWindow, m.maxOutputTokens].some((n) => Number.isNaN(n)))) throw new Error("上下文 / 最大输出必须是正整数");
+  return list;
+}
 async function loadModel() {
   const m = await api("/api/admin/model");
   const provs = Object.entries(m.providers || {});
@@ -290,12 +415,15 @@ async function loadModel() {
     $("pv-name").value = p.name || "";
     $("pv-kind").value = p.kind || "anthropic";
     $("pv-url").value = p.baseURL || "";
-    $("pv-models").value = Object.keys(p.models || {}).join(", ");
-    $("pv-main").value = m.main || "";
+    const models = Object.entries(p.models || {}).map(([mid, v]) => ({ id: mid, ...(v && typeof v === "object" ? v : {}) }));
+    const mainId = String(m.main || "").split("/").slice(1).join("/");
+    models.sort((a, b) => (a.id === mainId ? -1 : b.id === mainId ? 1 : 0)); // 当前默认模型排第一，保存语义即「首行为默认」
+    renderModelRows(models);
     $("key-hint").textContent = p.hasKey ? "密钥已保存，留空即沿用" : "尚未设置密钥";
     $("sync-state").textContent = `由 ${id} 下发`;
   } else {
     $("sync-state").textContent = "尚未配置";
+    renderModelRows([]);
   }
 }
 $("btn-pv-save").onclick = async () => {
@@ -307,8 +435,7 @@ $("btn-pv-save").onclick = async () => {
       kind: $("pv-kind").value,
       baseURL: $("pv-url").value.trim(),
       apiKey: $("pv-key").value.trim() || undefined,
-      models: Object.fromEntries($("pv-models").value.split(",").map((s) => s.trim()).filter(Boolean).map((mm) => [mm, { name: mm }])),
-      main: $("pv-main").value.trim() || undefined,
+      models: readModelRows(),
     })});
     $("pv-ok").textContent = `已保存并推送到 ${r.pushed} 个租户`;
     loadModel();

@@ -141,6 +141,107 @@ function saveAdminModelConfig(cfg) {
   try { fs.chmodSync(adminModelConfigPath(), 0o600); } catch { /* win 忽略 */ }
 }
 
+/** 管理后台提交的模型列表（数组，每项一套能力配置）。兼容旧的「对象 id→配置」格式。 */
+function normalizeAdminModels(models) {
+  const raw = Array.isArray(models)
+    ? models.map((m) => (typeof m === "string" ? { id: m } : m)).filter(Boolean)
+    : Object.entries(models || {}).map(([id, v]) => ({ id, ...(v && typeof v === "object" ? v : {}) }));
+  const out = [], seen = new Set();
+  for (const m of raw) {
+    const id = String(m.id ?? m.modelId ?? "").trim();
+    if (!id) continue;
+    if (id.length > 200) throw new Error(`模型 ID 过长：${id.slice(0, 40)}…`);
+    if (seen.has(id)) throw new Error(`模型 ID 重复：${id}`);
+    seen.add(id);
+    const entry = { id, name: cleanText(String(m.name ?? "")).trim() || id };
+    for (const [key, label] of [["contextWindow", "上下文"], ["maxOutputTokens", "最大输出"]]) {
+      const value = m[key];
+      if (value === undefined || value === null || value === "") continue;
+      const n = Number(value);
+      if (!Number.isInteger(n) || n <= 0 || n > 10_000_000) throw new Error(`${id} 的${label}必须是正整数（≤ 10000000）`);
+      entry[key] = n;
+    }
+    if (typeof m.supportsImages === "boolean") entry.supportsImages = m.supportsImages;
+    if (typeof m.supportsPdf === "boolean") entry.supportsPdf = m.supportsPdf;
+    if (typeof m.supportsVideo === "boolean") entry.supportsVideo = m.supportsVideo;
+    const levels = Array.isArray(m.reasoningLevels)
+      ? m.reasoningLevels
+      : typeof m.reasoningLevels === "string" ? m.reasoningLevels.split(",") : [];
+    const clean = [...new Set(levels.map((s) => cleanText(String(s)).trim()).filter(Boolean))];
+    if (clean.length) entry.reasoningLevels = clean.slice(0, 20);
+    out.push(entry);
+  }
+  if (!out.length) throw new Error("模型列表不能为空");
+  return out;
+}
+
+/**
+ * 生成 CLI 新格式的个人 provider 配置（provider_config.json）。
+ * 只有这个文件能表达每模型的能力：上下文窗口、最大输出、视觉/PDF/视频、思考等级。
+ * 旧 config.json 的 provider.models 仍会写一份（兼容旧内核），但新内核只从中导入 id/上下文/最大输出。
+ */
+function buildPersonalProviderConfig(adminCfg) {
+  const providers = adminCfg?.provider || {};
+  const providerOrder = [], providerRules = [], modelRules = [];
+  for (const [pid, p] of Object.entries(providers)) {
+    const modelIds = Object.keys(p?.models || {});
+    const apiKey = p?.options?.apiKey || "";
+    const baseURL = p?.options?.baseURL || "";
+    if (!modelIds.length || !apiKey || !baseURL) continue;
+    providerOrder.push(pid);
+    providerRules.push({
+      providerId: pid,
+      providerName: p.name || pid,
+      config: {
+        group: "standard-personal",
+        access: { type: "api-key", apiKey },
+        api: { type: p.kind === "anthropic" ? "anthropic-messages" : "openai-chat-completions", baseUrl: baseURL },
+        personalModelIds: modelIds,
+        modelOrder: modelIds,
+      },
+    });
+    for (const mid of modelIds) {
+      const m = p.models[mid] || {};
+      const config = { enabled: true };
+      const properties = {};
+      if (Number.isInteger(m.contextWindow) && m.contextWindow > 0) properties.contextWindow = m.contextWindow;
+      const inputFormat = {};
+      if (typeof m.supportsImages === "boolean") inputFormat.supportsImage = m.supportsImages;
+      if (typeof m.supportsPdf === "boolean") inputFormat.supportsPdf = m.supportsPdf;
+      if (typeof m.supportsVideo === "boolean") inputFormat.supportsVideo = m.supportsVideo;
+      if (Object.keys(inputFormat).length) properties.inputFormat = inputFormat;
+      if (Object.keys(properties).length) config.properties = properties;
+      const optionSpecs = {};
+      if (Number.isInteger(m.maxOutputTokens) && m.maxOutputTokens > 0) optionSpecs.maxOutputTokens = { max: m.maxOutputTokens };
+      const levels = Array.isArray(m.reasoningLevels) ? m.reasoningLevels.filter(Boolean) : [];
+      if (levels.length) optionSpecs.reasoningLevel = { values: levels };
+      if (Object.keys(optionSpecs).length) config.optionSpecs = optionSpecs;
+      modelRules.push({ providerId: pid, modelId: mid, config });
+    }
+  }
+  if (!providerOrder.length) return null;
+  // 默认模型：main 有效则用 main；否则回落到第一个 provider 的第一个模型
+  let defaultModelSelection = null;
+  const available = new Set(providerOrder);
+  const [mainPid, ...mainRest] = String(adminCfg.main || "").split("/");
+  const mainMid = mainRest.join("/");
+  if (available.has(mainPid) && providers[mainPid]?.models?.[mainMid]) defaultModelSelection = { providerId: mainPid, modelId: mainMid };
+  else {
+    const pid = providerOrder[0];
+    const mid = Object.keys(providers[pid].models)[0];
+    if (mid) defaultModelSelection = { providerId: pid, modelId: mid };
+  }
+  return {
+    schemaVersion: 1,
+    config: {
+      providerOrder,
+      providerConfigRules: { providerRules },
+      modelConfigRules: { providerModelRules: modelRules, manualProviderModelRules: [] },
+      ...(defaultModelSelection ? { defaultModelSelection } : {}),
+    },
+  };
+}
+
 /** 把管理员模型配置写入指定用户 HOME 的 cli/config.json（幂等，保留用户其他字段）。
  *  deep=true 时不会经 ensureUserHome 再回调自己（避免 ensureUserHome→apply→ensure 死循环）。 */
 function applyAdminModelToUser(uid, adminCfg = loadAdminModelConfig(), deep = false) {
@@ -153,6 +254,13 @@ function applyAdminModelToUser(uid, adminCfg = loadAdminModelConfig(), deep = fa
   cfg.model = { ...(cfg.model || {}), main: adminCfg.main || (Object.keys(adminCfg.provider)[0] + "/" + (firstProvider?.defaultModel || "")) };
   if (!cfg.model.main || cfg.model.main.endsWith("/")) delete cfg.model.main;
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  // 每模型能力（上下文/最大输出/视觉/思考等级）写进新格式 provider_config.json —— CLI 优先读取它
+  const personalPath = path.join(home, ".zcode", "cli", "provider_config.json");
+  const personalCfg = buildPersonalProviderConfig(adminCfg);
+  if (personalCfg) {
+    fs.writeFileSync(personalPath, JSON.stringify(personalCfg, null, 2));
+    try { fs.chmodSync(personalPath, 0o600); } catch { /* win 忽略 */ }
+  } else { try { fs.unlinkSync(personalPath); } catch { /* 没有就忽略 */ } }
   return true;
 }
 
@@ -465,6 +573,10 @@ function cliEnv(uid) {
     env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = CONFIG.builtinProviderFile;
     env.ZCODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE = CONFIG.builtinProviderFile;
   }
+  // 每租户的个人 provider 配置（含每模型能力）；同时防止宿主 env 把管理员自己的配置泄漏进租户进程
+  const personalProviderFile = path.join(home, ".zcode", "cli", "provider_config.json");
+  if (fs.existsSync(personalProviderFile)) env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = personalProviderFile;
+  else delete env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE;
   env.ZCODE_PORTAL_HOME = home; // 供 hooks / 技能识别 portal 环境
   return env;
 }
@@ -578,6 +690,12 @@ route("POST", /^\/api\/me\/provider$/, async (req, res, m, user) => {
   const { providerId, name, kind, baseURL, apiKey, models, main, defaultModel } = await readJson(req);
   if (!providerId || !/^[a-zA-Z0-9_-]{1,40}$/.test(providerId)) return send(res, 400, { error: "providerId 非法" });
   if (!["anthropic", "openai"].includes(kind)) return send(res, 400, { error: "kind 仅支持 anthropic | openai" });
+  let modelList;
+  try { modelList = normalizeAdminModels(models); } catch (e) { return send(res, 400, { error: e.message }); }
+  const modelMap = Object.fromEntries(modelList.map((m) => {
+    const { id, ...rest } = m;
+    return [id, { ...rest, name: rest.name || id }];
+  }));
   const cfg = loadAdminModelConfig() || { provider: {} };
   cfg.provider ??= {};
   const prev = cfg.provider[providerId] || {};
@@ -591,7 +709,7 @@ route("POST", /^\/api\/me\/provider$/, async (req, res, m, user) => {
         baseURL: baseURL || prev.options?.baseURL,
         ...(apiKey ? { apiKey } : {}), // 留空 = 沿用旧 key
       },
-      models: models || prev.models || {},
+      models: modelMap,
     },
   };
   // 模型顺序语义：列表第一个 = 默认模型；其余按序作为「失败时自动回退」的候选
@@ -602,6 +720,7 @@ route("POST", /^\/api\/me\/provider$/, async (req, res, m, user) => {
   if (mainProvider !== providerId || !modelIds.includes(mainModelId)) {
     mainModelId = defaultModel && modelIds.includes(defaultModel) ? defaultModel : (modelIds[0] || "");
   }
+  cfg.provider[providerId].defaultModel = mainModelId || cfg.provider[providerId].defaultModel || "";
   cfg.main = mainModelId ? providerId + "/" + mainModelId : "";
   cfg.fallbacks = modelIds.filter((mid) => mid !== mainModelId).map((mid) => providerId + "/" + mid);
   saveAdminModelConfig(cfg);
