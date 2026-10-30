@@ -29,7 +29,7 @@ kernel/glm/packages/           ← 官方全局插件 + 技能（随内核升级
 | **品牌白标** | 管理员在后台配置企业名/Logo/主题色/标语/自定义 CSS（`data/branding.json`），租户端登录页与主界面即时套用 |
 | **企业全局技能** | 管理员把技能放 `data/skills/`（或后台上传 zip/SKILL.md）→ 自动注入每个租户的用户级技能目录；租户自建同名技能不被覆盖 |
 | **全局 MCP** | 管理员后台统一配置 MCP servers（command 本地型 / url 远程型），保存即写入全部租户的 CLI 配置 |
-| **租户自建技能** | 网页「技能一览」上传 zip 或 SKILL.md，可选用户级（跨工作区）或工作区级 |
+| **租户自建技能** | 网页「技能一览」只能上传 zip/SKILL.md 到**当前工作区**（仅本工作区生效）；全局层（跨工作区）由管理员统一下发，租户只读、不可删除 |
 | 全局插件/技能 | 内核自带 `packages/`（官方插件与 bundled skills），以只读方式随内核分发，全员共享 |
 | 用户自建技能 | 放 `data/users/<uid>/.zcode/skills/`（用户级）或工作区 `.zcode/skills/`（工作区级），CLI 原生识别三层叠加 |
 | 内核升级 | `scripts/update-kernel.mjs`：官方 CDN manifest + sha256 校验 + 原子切换（也支持从桌面安装目录复制 / 手动放置），**portal 代码零改动** |

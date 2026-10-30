@@ -645,16 +645,25 @@ route("POST", /^\/api\/workspaces$/, async (req, res, m, user) => {
 route("GET", /^\/api\/skills$/, async (req, res, m, user) => {
   const q = new URL(req.url, "http://x").searchParams;
   const ws = q.get("ws");
+  // 全局层（用户级目录）：管理员下发（带 .admin-skill 标记）或历史遗留，均由管理员管理，租户只读
+  // 工作区层：租户可自行上传/删除
+  const globalDir = path.join(userHome(user.uid), ".zcode", "skills");
+  const projectDir = ws ? path.join(wsDir(user.uid, ws), ".zcode", "skills") : null;
   const list = (dir, scope) => {
     try {
       return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory())
         .filter((e) => fs.existsSync(path.join(dir, e.name, "SKILL.md")))
-        .map((e) => ({ scope, name: e.name, dir: path.join(dir, e.name) }));
+        .map((e) => ({
+          scope,
+          name: e.name,
+          readonly: scope === "global",
+          managedByAdmin: scope === "global" && fs.existsSync(path.join(dir, e.name, ADMIN_SKILL_MARK)),
+        }));
     } catch { return []; }
   };
   const skills = [
-    ...list(path.join(userHome(user.uid), ".zcode", "skills"), "user"),
-    ...(ws ? list(path.join(wsDir(user.uid, ws), ".zcode", "skills"), "project") : []),
+    ...list(globalDir, "global"),
+    ...(projectDir ? list(projectDir, "project") : []),
   ];
   send(res, 200, { skills });
 }, { auth: true });
@@ -1257,10 +1266,11 @@ route("DELETE", /^\/api\/admin\/skills\/([a-zA-Z0-9_-]+)$/, async (req, res, m) 
 route("POST", /^\/api\/skills\/upload$/, async (req, res, m, user) => {
   const q = new URL(req.url, "http://x").searchParams;
   const name = (q.get("name") || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 60);
-  const scope = q.get("scope") === "project" ? "project" : "user";
+  if ((q.get("scope") || "project") !== "project") return send(res, 403, { error: "全局技能由管理员统一管理，租户只能上传到自己的工作区" });
+  const scope = "project";
   const ws = (q.get("ws") || "default").replace(/[^a-zA-Z0-9_-]/g, "");
   if (!name) return send(res, 400, { error: "缺少技能名 name" });
-  const base = scope === "project" ? path.join(wsDir(user.uid, ws), ".zcode", "skills") : path.join(userHome(user.uid), ".zcode", "skills");
+  const base = path.join(wsDir(user.uid, ws), ".zcode", "skills");
   const dst = path.join(base, name);
   if (!dst.startsWith(base)) return send(res, 400, { error: "路径非法" });
   const body = await readBody(req, 50 * 1024 * 1024);
@@ -1292,10 +1302,10 @@ route("POST", /^\/api\/skills\/upload$/, async (req, res, m, user) => {
 
 route("DELETE", /^\/api\/skills\/([a-zA-Z0-9_-]+)$/, async (req, res, m, user) => {
   const q = new URL(req.url, "http://x").searchParams;
-  const scope = q.get("scope") === "project" ? "project" : "user";
+  if ((q.get("scope") || "project") !== "project") return send(res, 403, { error: "全局技能由管理员统一管理，租户不可删除" });
   const ws = (q.get("ws") || "default").replace(/[^a-zA-Z0-9_-]/g, "");
   const name = m[1];
-  const base = scope === "project" ? path.join(wsDir(user.uid, ws), ".zcode", "skills") : path.join(userHome(user.uid), ".zcode", "skills");
+  const base = path.join(wsDir(user.uid, ws), ".zcode", "skills");
   const dst = path.join(base, name);
   if (!dst.startsWith(base) || !fs.existsSync(dst)) return send(res, 404, { error: "技能不存在" });
   fs.rmSync(dst, { recursive: true, force: true });

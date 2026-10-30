@@ -279,15 +279,11 @@ button.stopping{background:var(--negative);color:#fff;border-color:var(--negativ
 <div class="panel hidden" id="panel-skills">
   <div class="card">
     <h2>技能一览</h2>
-    <div class="sub">三层自动叠加：内核官方技能（全员共享）· 企业技能（管理员下发）· 你的技能（用户级 / 工作区级）</div>
+    <div class="sub">三层叠加：内核官方技能（全员共享）· 全局技能（管理员统一管理，只读）· 工作区技能（你可添加/删除，仅本工作区生效）</div>
     <div id="sk-list"></div>
     <div class="btn-row" style="margin-top:14px">
       <input type="file" id="sk-file" class="hidden">
-      <button id="btn-sk-upload">上传技能（zip 或 SKILL.md）</button>
-      <select id="sk-scope" style="width:auto;flex:0 0 auto">
-        <option value="user">用户级（跨工作区）</option>
-        <option value="project">工作区级（仅本工作区）</option>
-      </select>
+      <button id="btn-sk-upload">上传技能到当前工作区（zip 或 SKILL.md）</button>
     </div>
     <div class="msg err" id="sk-err"></div>
     <div class="msg ok" id="sk-ok"></div>
@@ -817,15 +813,16 @@ $("btn-pv-close").onclick = () => $("panel-model").classList.add("hidden");
 $("btn-skills").onclick = async () => { await refreshSkills(); $("panel-skills").classList.remove("hidden"); };
 async function refreshSkills() {
   const { skills } = await api(`/api/skills?ws=${encodeURIComponent(state.ws)}`);
-  const tag = { user: "用户级", project: "工作区级" };
-  $("sk-list").innerHTML = skills.length ? skills.map((s) =>
-    `<div class="kv"><span class="k">${esc(s.name)}</span><span class="v"><span class="pill">${tag[s.scope] || s.scope}</span>
-     <a href="#" data-sk-del="${esc(s.name)}" data-sk-scope="${esc(s.scope)}" style="color:var(--negative);text-decoration:none;font-weight:600;margin-left:8px">×</a></span></div>`).join("")
-    : `<div class="kv"><span class="k">还没有自己的技能</span><span class="v" style="color:var(--muted)">点下方「上传技能」，zip 根层需含 SKILL.md</span></div>`;
+  const tag = { global: "全局 · 管理员", project: "当前工作区" };
+  $("sk-list").innerHTML = skills.length ? skills.map((s) => {
+    const del = s.readonly ? "" : `<a href="#" data-sk-del="${esc(s.name)}" style="color:var(--negative);text-decoration:none;font-weight:600;margin-left:8px" title="删除工作区技能">×</a>`;
+    return `<div class="kv"><span class="k">${esc(s.name)}</span><span class="v"><span class="pill${s.scope === "project" ? " ok" : ""}">${tag[s.scope] || s.scope}</span>${del}</span></div>`;
+  }).join("")
+    : `<div class="kv"><span class="k">还没有工作区技能</span><span class="v" style="color:var(--muted)">点下方按钮上传，zip 根层需含 SKILL.md</span></div>`;
   $("sk-list").querySelectorAll("[data-sk-del]").forEach((a) => a.onclick = async (e) => {
     e.preventDefault();
-    if (!confirm(`删除技能 ${a.dataset.skDel}？`)) return;
-    await api(`/api/skills/${a.dataset.skDel}?scope=${a.dataset.skScope}&ws=${encodeURIComponent(state.ws)}`, { method: "DELETE" });
+    if (!confirm(`删除工作区技能 ${a.dataset.skDel}？`)) return;
+    await api(`/api/skills/${a.dataset.skDel}?scope=project&ws=${encodeURIComponent(state.ws)}`, { method: "DELETE" });
     refreshSkills();
   });
 }
@@ -836,10 +833,10 @@ $("sk-file").onchange = async () => {
   const name = f.name.replace(/.(zip|md)$/i, "").replace(/[^a-zA-Z0-9_-]/g, "-");
   $("sk-err").textContent = ""; $("sk-ok").textContent = `上传 ${f.name} …`;
   try {
-    const r = await fetch(`/api/skills/upload?name=${encodeURIComponent(name)}&scope=${$("sk-scope").value}&ws=${encodeURIComponent(state.ws)}`, { method: "POST", body: f });
+    const r = await fetch(`/api/skills/upload?name=${encodeURIComponent(name)}&scope=project&ws=${encodeURIComponent(state.ws)}`, { method: "POST", body: f });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
-    $("sk-ok").textContent = `已完成：${j.name} 已就绪（${j.scope === "project" ? "工作区级" : "用户级"}）`;
+    $("sk-ok").textContent = `已完成：${j.name} 已上传到当前工作区`;
     refreshSkills();
   } catch (e) { $("sk-err").textContent = e.message; }
   $("sk-file").value = "";
