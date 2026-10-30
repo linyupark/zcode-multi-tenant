@@ -70,6 +70,8 @@ button.stopping{background:var(--negative);color:#fff;border-color:var(--negativ
 
 /* 会话列表 */
 .sess-item{display:flex;align-items:center;gap:6px;padding:5px 10px 5px 22px;border-radius:var(--radius-control);color:var(--muted);font-size:12.5px;cursor:pointer}
+.sess-item .dot{width:7px;height:7px;border-radius:99px;background:var(--control);flex:0 0 auto}
+.sess-item.on .dot{background:var(--accent)}
 .sess-item:hover{background:var(--raised);color:var(--text)}
 .sess-item.on{background:var(--active);color:var(--text)}
 .sess-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -365,11 +367,11 @@ async function loadWorkspaces() {
   const { sessions } = await api(`/api/sessions?ws=${encodeURIComponent(state.ws)}`);
   $("ws-list").innerHTML = list.map((w) => {
     const wsActive = w === state.ws && !state.sessionId; // 选中会话时，工作区不再高亮
-    let inner = `<a class="nav-item ${wsActive ? "on" : ""}" data-ws="${esc(w)}"><span class="dot"></span>${esc(w)}</a>`;
+    let inner = `<a class="nav-item ${wsActive ? "on" : ""}" data-ws="${esc(w)}">${wsActive ? '<span class="dot"></span>' : ''}${esc(w)}</a>`;
     if (w === state.ws) {
       inner += sessions.length
         ? sessions.map((s2) => `<div class="sess-item ${s2.id === state.sessionId ? "on" : ""}" data-sess="${esc(s2.id)}" title="${esc(s2.title || s2.id)}">
-            <span class="t">${esc(s2.title || s2.id.slice(0, 18) + "…")}</span>
+            <span class="dot"></span><span class="t">${esc(s2.title || s2.id.slice(0, 18) + "…")}</span>
             <a class="del" data-sess-del="${esc(s2.id)}" title="删除会话">×</a></div>`).join("")
         : `<div class="sess-empty">暂无会话</div>`;
     }
