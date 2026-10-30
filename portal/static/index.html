@@ -229,6 +229,10 @@ button.stopping{background:var(--negative);color:#fff;border-color:var(--negativ
   .panel .card{width:100%!important;max-width:none;max-height:calc(var(--app-h,100dvh) - 20px);border-radius:18px 18px 0 0;border-bottom:0;padding:18px 16px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -10px 36px rgba(0,0,0,.18)}
   .panel .card::before{content:"";display:block;width:36px;height:4px;border-radius:99px;background:var(--control);margin:-6px auto 14px}
   #file-tree{max-height:38vh}
+  #file-preview .fp-head{flex-wrap:wrap;gap:6px}
+  #fp-name{flex:1 1 100%;min-width:0;overflow-wrap:anywhere;margin-bottom:2px}
+  #file-preview .fp-head>span{width:100%}
+  #file-preview .fp-head>span button{flex:1;min-width:0;white-space:nowrap;min-height:38px}
   #fp-img{max-height:32vh}
   #fp-text{max-height:32vh;font-size:12px}
   .btn-row{gap:8px}
@@ -1009,6 +1013,7 @@ function previewFile(rel) {
   $("fp-name").textContent = rel;
   $("fp-img").classList.add("hidden"); $("fp-text").classList.add("hidden");
   $("file-preview").classList.remove("hidden");
+  requestAnimationFrame(() => $("file-preview").scrollIntoView({ behavior: "smooth", block: "nearest" }));
   const ext = rel.split(".").pop().toLowerCase();
   if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)) {
     $("fp-img").src = `/api/files/content?ws=${encodeURIComponent(state.ws)}&path=${encodeURIComponent(rel)}`;
