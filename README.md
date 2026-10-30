@@ -2,7 +2,9 @@
 
 把官方 [ZCode](https://github.com/zai-org/ZCode) CLI 变成**多用户 Web 服务**：每个用户浏览器注册登录后获得独立工作区，享受同一套官方内核、全局插件与技能，同时可以创建自己的用户级 / 工作区级技能。
 
-**零 npm 依赖、单文件 Node 服务**（Node ≥ 22），无需 Docker。
+**服务端零 npm 依赖、单文件 Node 服务**（Node ≥ 22），无需 Docker。前端为 Svelte 5 + UnoCSS 源码（`portal/frontend/`），部署时构建一次，产物输出到 `portal/static/`。
+
+```
 
 ```
 浏览器 ──HTTP/SSE──> portal/server.mjs（单文件 Node 服务）
@@ -44,11 +46,14 @@ node scripts/update-kernel.mjs --source desktop
 #   Windows 自动探测 C:/Program Files/ZCode/resources/glm
 #   或指定路径: node scripts/update-kernel.mjs --source desktop --desktop <…/ZCode/resources/glm>
 
-# 2. 启动
+# 2. 构建前端（Svelte 5 源码在 portal/frontend/，产物输出到 portal/static/）
+cd portal/frontend && npm ci && npm run build && cd ../..
+
+# 3. 启动
 ADMIN_PASSWORD=youradmin PORT=9900 node portal/server.mjs
 
-# 3. 租户：浏览器打开 http://localhost:9900 → 注册 → 直接聊天
-# 4. 管理员：浏览器打开 http://localhost:9900/admin → 用 ADMIN_PASSWORD 登录
+# 4. 租户：浏览器打开 http://localhost:9900 → 注册 → 直接聊天
+# 5. 管理员：浏览器打开 http://localhost:9900/admin → 用 ADMIN_PASSWORD 登录
 #    → 「全局模型配置」填 provider（Z.ai Coding Plan: kind=anthropic,
 #      baseURL=https://open.bigmodel.cn/api/anthropic）→ 保存即推送给全部租户
 #    模型列表逐行配置：每个模型可单独设置上下文窗口、最大输出、视觉/PDF/视频输入、

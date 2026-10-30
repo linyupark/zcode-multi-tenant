@@ -618,7 +618,7 @@ function ssePush(key, event, data) {
 
 // ---------- static ----------
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2", ".woff": "font/woff" };
 function serveStatic(res, rel) {
   const file = path.normalize(path.join(STATIC_DIR, rel));
   if (!file.startsWith(STATIC_DIR)) return send(res, 403, { error: "forbidden" });
