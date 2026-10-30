@@ -581,23 +581,28 @@ route("POST", /^\/api\/me\/provider$/, async (req, res, m, user) => {
   const cfg = loadAdminModelConfig() || { provider: {} };
   cfg.provider ??= {};
   const prev = cfg.provider[providerId] || {};
-  cfg.provider[providerId] = {
-    kind, name: cleanText(name) || providerId,
-    defaultModel: defaultModel || prev.defaultModel || "",
-    options: {
-      ...(prev.options || {}),
-      baseURL: baseURL || prev.options?.baseURL,
-      ...(apiKey ? { apiKey } : {}), // 留空 = 沿用旧 key
+  // 后台表单只有一个 Provider：保存时整表替换，避免旧 provider 残留导致"改了又变回去"
+  cfg.provider = {
+    [providerId]: {
+      kind, name: cleanText(name) || providerId,
+      defaultModel: defaultModel || prev.defaultModel || "",
+      options: {
+        ...(prev.options || {}),
+        baseURL: baseURL || prev.options?.baseURL,
+        ...(apiKey ? { apiKey } : {}), // 留空 = 沿用旧 key
+      },
+      models: models || prev.models || {},
     },
-    models: models || prev.models || {},
   };
   // 模型顺序语义：列表第一个 = 默认模型；其余按序作为「失败时自动回退」的候选
   const modelIds = Object.keys(cfg.provider[providerId].models || {});
-  let mainFull = main || cfg.main || "";
-  const mainModelId0 = String(mainFull).includes("/") ? String(mainFull).split("/").slice(1).join("/") : "";
-  if (!mainFull || !modelIds.includes(mainModelId0)) mainFull = providerId + "/" + (defaultModel || modelIds[0] || ""); // 默认模型不在列表时回落到第一个
-  cfg.main = mainFull;
-  const mainModelId = String(mainFull).includes("/") ? String(mainFull).split("/").slice(1).join("/") : String(mainFull);
+  // main 必须归一化到当前 provider：旧的 main 若指向其他 provider 或不在模型列表里，一律回落到当前列表第一个
+  const mainProvider = String(main || "").split("/")[0];
+  let mainModelId = String(main || "").includes("/") ? String(main).split("/").slice(1).join("/") : "";
+  if (mainProvider !== providerId || !modelIds.includes(mainModelId)) {
+    mainModelId = defaultModel && modelIds.includes(defaultModel) ? defaultModel : (modelIds[0] || "");
+  }
+  cfg.main = mainModelId ? providerId + "/" + mainModelId : "";
   cfg.fallbacks = modelIds.filter((mid) => mid !== mainModelId).map((mid) => providerId + "/" + mid);
   saveAdminModelConfig(cfg);
   // 立即推送到所有已存在用户
@@ -1338,6 +1343,34 @@ route("POST", /^\/api\/admin\/reset-password$/, async (req, res) => {
   saveUsers(users);
   log(`password reset by admin: user=${uid.slice(0, 8)}`);
   send(res, 200, { ok: true, username: users[uid].username });
+});
+
+// 删除租户：账号 + 用户 HOME（凭据/会话/技能）+ 全部工作区目录，一并清除，不可恢复
+route("POST", /^\/api\/admin\/delete-user$/, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { uid } = await readJson(req);
+  if (!isValidUid(uid || "")) return send(res, 400, { error: "uid 非法" });
+  const users = loadUsers();
+  if (!users[uid]) return send(res, 404, { error: "租户不存在" });
+  const username = users[uid].username;
+  // 1) 停止该租户所有运行中的会话进程
+  for (const [key, info] of runningSessions) {
+    if (key.startsWith(uid + "/")) { try { process.kill(info.pid); } catch { /* ignore */ } runningSessions.delete(key); }
+  }
+  // 2) 删除账号
+  delete users[uid];
+  saveUsers(users);
+  // 3) 删除用户 HOME 与工作区目录（两者都在 data/ 下，路径由 uid 派生，已做正则校验）
+  const targets = [userHome(uid), userWsRoot(uid)];
+  const removed = [];
+  const failures = [];
+  for (const dir of targets) {
+    try {
+      if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); removed.push(path.relative(DATA_DIR, dir)); }
+    } catch (e) { failures.push(`${path.relative(DATA_DIR, dir)}: ${e.message}`); }
+  }
+  log(`tenant deleted: ${username} (${uid}) | removed: ${removed.join(", ") || "none"}${failures.length ? " | failures: " + failures.join("; ") : ""}`);
+  send(res, 200, { ok: true, username, removed, failures });
 });
 
 // --- pages ---
