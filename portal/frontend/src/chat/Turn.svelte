@@ -12,7 +12,7 @@
   }
 
   const showLoading = $derived(
-    t.streaming && !t.text && !t.think && !t.tools?.length && !t.fallbacks?.length,
+    t.streaming && !t.text && !t.think && !t.tools?.length && !t.fallbacks?.length && !t.violations?.length,
   );
   const emptyTurn = $derived(
     !t.streaming && !t.text && !t.think && !t.tools?.length,
@@ -45,6 +45,9 @@
     {#each t.fallbacks || [] as fb}
       <div class="fallback-note">模型 {fb.from} 调用失败，已自动切换到 {fb.to}{fb.reason ? `（${fb.reason.slice(0, 60)}）` : ""}</div>
     {/each}
+    {#each t.violations || [] as v}
+      <div class="violation-note">安全拦截（{v.tool}）：{v.message}。本次执行已终止，可调整需求后继续。</div>
+    {/each}
     {#if t.text}<MarkdownOut raw={t.text} />{/if}
     {#if showLoading}
       <div class="loading-dots" aria-label="正在思考"><i></i><i></i><i></i></div>
@@ -72,6 +75,7 @@
   .tool-icon.on{color:var(--accent);border-color:var(--accent);background:#eef7f9}
   .tool-detail{margin:0 0 10px;padding:8px 12px;background:var(--raised);border-radius:6px;font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
   .fallback-note{margin:6px 0;padding:5px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;white-space:normal}
+  .violation-note{margin:6px 0;padding:5px 10px;background:#fdecec;border:1px solid #f5c2c4;border-radius:6px;font-size:12px;color:#8f1d22;white-space:normal}
   @media (max-width:768px){
     .user .bubble{max-width:88%}
     .assistant .bubble{border-radius:3px 12px 12px 12px}

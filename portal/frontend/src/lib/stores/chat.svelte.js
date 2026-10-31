@@ -82,6 +82,7 @@ export async function send(text) {
     tools: [],
     text: "",
     fallbacks: [],
+    violations: [],
     streaming: true,
   };
   chat.turns.push(raw);
@@ -117,6 +118,18 @@ export async function send(text) {
               t.text += p.delta;
             } else if (ev.type === "session.updated" && p.content !== undefined) {
               t.text = p.content;
+            } else if (ev.type === "tool.updated") {
+              // 新内核事件：kind=scheduled 时带完整 input（写入详情），在流式界面即时出图标
+              const callId = p.toolCallId || p.callID || p.id || "";
+              const name = p.toolName || p.name || p.tool || "tool";
+              if (p.input !== undefined && p.input !== null && !(callId && t.tools.some((x) => x.callId === callId))) {
+                const input = p.input;
+                const brief = typeof input === "string" ? input.slice(0, 90)
+                  : input && typeof input === "object" ? JSON.stringify(input).slice(0, 90)
+                  : p.summary || p.description || "";
+                const detail = typeof input === "string" ? input : JSON.stringify(input, null, 1);
+                t.tools.push({ name, brief, detail, callId: callId || "" });
+              }
             } else if (ev.type === "tool.execution" || ev.type === "tool_execution" || ev.type === "tool.execution_start" || ev.type === "tool_call") {
               const name = p.toolName || p.name || p.tool || "tool";
               const brief = typeof p.input === "string" ? p.input.slice(0, 90)
@@ -131,6 +144,9 @@ export async function send(text) {
         } else if (evName === "fallback") {
           t.fallbacks.push({ from: ev.from, to: ev.to, reason: ev.reason });
           setStatus("已切换备用模型…");
+        } else if (evName === "guardrail") {
+          t.violations.push({ message: ev.message, tool: ev.tool });
+          setStatus("安全拦截：" + ev.message);
         } else if (evName === "end") {
           setStatus(ev.code === 0 ? "完成" : (`退出码 ${ev.code}` + (ev.error ? "：" + String(ev.error).slice(0, 80) : "")));
           if (ev.sessionId) session.sessionId = ev.sessionId;

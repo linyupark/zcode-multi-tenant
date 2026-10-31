@@ -243,6 +243,17 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
     </section>
 
     <section>
+      <h2>全局行为约束 <span class="note">AGENTS.md：注入每个租户的提示层约束（防误操作；服务端另有工具拦截 + 审计）</span></h2>
+      <div class="card" style="padding:20px">
+        <div class="hint" style="margin-bottom:12px">每次派发会话前自动写入租户的 <code class="mono">~/.zcode/AGENTS.md</code>（被篡改会自动恢复）。清空内容保存即恢复内置默认模板；保存后下一个会话生效。</div>
+        <textarea id="am-content" rows="10" style="width:100%;padding:10px 12px;border:1px solid var(--control);border-radius:6px;font:inherit;font-family:'IBM Plex Mono',monospace;font-size:12px;resize:vertical"></textarea>
+        <div class="msg err" id="am-err"></div>
+        <div class="msg ok" id="am-ok"></div>
+        <div class="btn-row"><button id="btn-am-save">保存行为约束</button><span class="hint mono" id="am-custom"></span></div>
+      </div>
+    </section>
+
+    <section>
       <h2>企业全局技能 <span class="note">全员共享，放这里 → 自动注入每个租户；官方内核技能随内核走，无需配置</span></h2>
       <div class="card" style="padding:20px">
         <div class="hint" style="margin-bottom:12px">两种方式：① 直接把技能目录放到 <code class="mono" id="skills-dir">data/skills/</code>；② 在下面上传 zip（根层含 SKILL.md）或单个 SKILL.md。租户自建的同名技能不会被覆盖。</div>
@@ -320,7 +331,7 @@ $("btn-open-portal").onclick = () => window.open("/", "_blank");
 async function enter() {
   $("gate").classList.add("hidden");
   $("shell").classList.remove("hidden");
-  await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp()]);
+  await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp(), loadAgentsMd()]);
 }
 
 /* model */
@@ -478,6 +489,23 @@ $("btn-br-reset").onclick = async () => {
     loadBranding();
     $("br-ok").textContent = "已恢复默认";
   } catch (e) { $("br-err").textContent = e.message; }
+};
+
+/* agents-md（全局行为约束） */
+async function loadAgentsMd() {
+  try {
+    const j = await api("/api/admin/agents-md");
+    $("am-content").value = j.content || "";
+    $("am-custom").textContent = j.custom ? "当前为自定义内容（清空保存可恢复默认模板）" : "当前为内置默认模板";
+  } catch (e) { $("am-err").textContent = e.message; }
+}
+$("btn-am-save").onclick = async () => {
+  $("am-err").textContent = ""; $("am-ok").textContent = "";
+  try {
+    const j = await api("/api/admin/agents-md", { method: "POST", body: JSON.stringify({ content: $("am-content").value }) });
+    $("am-custom").textContent = j.custom ? "当前为自定义内容（清空保存可恢复默认模板）" : "当前为内置默认模板";
+    $("am-ok").textContent = "已保存：下一个会话开始生效";
+  } catch (e) { $("am-err").textContent = e.message; }
 };
 
 /* ---------- 企业全局技能 ---------- */
