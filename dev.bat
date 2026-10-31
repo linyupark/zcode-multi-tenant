@@ -38,8 +38,9 @@ if errorlevel 1 (
 
 rem 前端源码在 portal/frontend，git pull 不会更新 portal/static（gitignored），
 rem 所以每次启动前都构建一次（增量构建约 2 秒），保证页面和源码一致。
+rem 注意：if 括号块内的 echo 文本里不能出现半角圆括号，否则块结构会被破坏导致闪退。
 if not exist "portal\frontend\node_modules" (
-  echo [dev] installing frontend deps (first run, needs npm registry) ...
+  echo [dev] installing frontend deps, first run needs npm registry ...
   pushd portal\frontend
   call npm ci --no-fund --no-audit
   popd
