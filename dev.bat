@@ -29,6 +29,20 @@ if not defined KILLED (
   ping -n 2 127.0.0.1 >nul
 )
 
+rem taskkill is async: wait up to 10s for the port to actually be released
+set /a TRIES=0
+:waitport
+set /a TRIES+=1
+netstat -ano | findstr /R /C:":%PORT% .*LISTENING" >nul
+if errorlevel 1 goto portfree
+if %TRIES% GEQ 10 (
+  echo [dev] WARN: port %PORT% still busy after 10s - a stale process may hold it
+  goto portfree
+)
+ping -n 2 127.0.0.1 >nul
+goto waitport
+:portfree
+
 where node >nul 2>&1
 if errorlevel 1 (
   echo [dev] node.exe not found in PATH
@@ -36,9 +50,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem 前端源码在 portal/frontend，git pull 不会更新 portal/static（gitignored），
-rem 所以每次启动前都构建一次（增量构建约 2 秒），保证页面和源码一致。
-rem 注意：if 括号块内的 echo 文本里不能出现半角圆括号，否则块结构会被破坏导致闪退。
+rem frontend source lives in portal/frontend; portal/static is gitignored so a
+rem git pull never refreshes it - build before every start (about 2 seconds).
+rem ASCII-only on purpose: cmd parses .bat in the ANSI codepage and UTF-8
+rem comments can corrupt line parsing. Pitfall: no half-width parentheses
+rem inside echo text within if-blocks - it breaks the block and the window
+rem closes instantly.
 if not exist "portal\frontend\node_modules" (
   echo [dev] installing frontend deps, first run needs npm registry ...
   pushd portal\frontend
