@@ -36,16 +36,22 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem 前端构建产物缺失时自动构建（源码在 portal/frontend）
-if not exist "portal\static\index.html" (
-  echo [dev] portal\static\index.html missing, building frontend ...
+rem 前端源码在 portal/frontend，git pull 不会更新 portal/static（gitignored），
+rem 所以每次启动前都构建一次（增量构建约 2 秒），保证页面和源码一致。
+if not exist "portal\frontend\node_modules" (
+  echo [dev] installing frontend deps (first run, needs npm registry) ...
   pushd portal\frontend
-  if not exist "node_modules" (
-    echo [dev] installing frontend deps ...
-    call npm install --no-fund --no-audit
-  )
-  call npm run build
+  call npm ci --no-fund --no-audit
   popd
+)
+if exist "portal\frontend\node_modules" (
+  echo [dev] building frontend ...
+  pushd portal\frontend
+  call npm run build
+  if errorlevel 1 echo [dev] WARN: frontend build failed - serving existing portal\static
+  popd
+) else (
+  echo [dev] WARN: frontend deps not installed and npm ci failed - serving existing portal\static
 )
 
 if not defined ADMIN_PASSWORD echo [dev] ADMIN_PASSWORD not set in this shell (a .env file will still be loaded if present)

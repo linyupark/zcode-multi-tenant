@@ -47,6 +47,7 @@ node scripts/update-kernel.mjs --source desktop
 #   或指定路径: node scripts/update-kernel.mjs --source desktop --desktop <…/ZCode/resources/glm>
 
 # 2. 构建前端（Svelte 5 源码在 portal/frontend/，产物输出到 portal/static/）
+#    Windows 用 dev.bat 启动会自动 npm ci + build；Linux/手动部署执行：
 cd portal/frontend && npm ci && npm run build && cd ../..
 
 # 3. 启动
