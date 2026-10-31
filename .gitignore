@@ -17,3 +17,5 @@ server.pid
 ref/
 # 前端构建产物（源码在 portal/frontend，部署时 npm run build 生成）
 portal/static/
+# 本仓库工作区的 zcode 会话/配置目录
+.zcode/
