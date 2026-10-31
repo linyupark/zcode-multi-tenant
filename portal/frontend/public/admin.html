@@ -296,12 +296,12 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
     </section>
 
     <section>
-      <h2>租户 <span class="note" id="user-note"></span></h2>
+      <h2>租户 <span class="note" id="user-note"></span><span class="note">自注册账号默认待激活，需在此启用后才能登录</span></h2>
       <table>
-        <thead><tr><th>用户名</th><th>显示名</th><th>UID</th><th class="num">工作区</th><th class="num">注册时间</th><th class="num">操作</th></tr></thead>
+        <thead><tr><th>用户名</th><th>显示名</th><th>UID</th><th class="num">状态</th><th class="num">工作区</th><th class="num">注册时间</th><th class="num">操作</th></tr></thead>
         <tbody id="user-rows"></tbody>
       </table>
-      <div class="empty hidden" id="user-empty">还没有租户注册。把门户地址发给同事即可自助注册。</div>
+      <div class="empty hidden" id="user-empty">还没有租户注册。把门户地址发给同事即可自助注册（注册后需在此启用）。</div>
     </section>
   </div>
 </div>
@@ -684,13 +684,27 @@ async function loadUsers() {
     <td><b>${esc(u.username)}</b></td>
     <td>${esc(u.displayName || "—")}</td>
     <td class="mono">${esc(u.uid.slice(0, 10))}…</td>
+    <td class="num">${u.active ? '<span class="pill ok">已启用</span>' : '<span class="pill" style="background:#fff3cd;color:#8a6d1d">待激活</span>'}</td>
     <td class="num">${u.hasHome ? '<span class="pill ok">已初始化</span>' : '<span class="pill">未初始化</span>'}</td>
     <td class="num" style="color:var(--muted)">${new Date(u.created).toLocaleString("zh-CN", { hour12: false })}</td>
     <td class="num" style="white-space:nowrap">
+      ${u.active
+        ? `<button class="ghost" data-set-active="0" data-uid="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">禁用</button>`
+        : `<button data-set-active="1" data-uid="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">启用</button>`}
       <button class="ghost" data-reset="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">重置密码</button>
       <button class="ghost" data-del-user="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px;color:var(--negative);border-color:var(--negative)">删除</button>
     </td>
   </tr>`).join("");
+  // 启用 / 禁用（禁用即回到待激活：旧会话立即失效）
+  $("user-rows").querySelectorAll("[data-set-active]").forEach((btn) => btn.onclick = async () => {
+    const active = btn.dataset.setActive === "1";
+    const name = btn.dataset.name;
+    if (!active && !confirm(`禁用「${name}」后该租户将无法登录（进行中的任务也会终止）。确认禁用？`)) return;
+    try {
+      await api("/api/admin/set-user-active", { method: "POST", body: JSON.stringify({ uid: btn.dataset.uid, active }) });
+      loadUsers();
+    } catch (e) { alert("操作失败: " + e.message); }
+  });
   $("user-rows").querySelectorAll("[data-reset]").forEach((btn) => btn.onclick = async () => {
     const np = prompt(`为 ${btn.dataset.name} 设置新密码（至少 6 位）：`);
     if (!np) return;

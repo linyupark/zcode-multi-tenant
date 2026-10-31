@@ -2,7 +2,7 @@
   import { login, register, session } from "../lib/stores/session.svelte.js";
 
   let tab = $state("login");
-  let liUser = $state(""), liPass = $state(""), liErr = $state("");
+  let liUser = $state(""), liPass = $state(""), liErr = $state(""), liNotice = $state("");
   let rgUser = $state(""), rgDisplay = $state(""), rgPass = $state(""), rgErr = $state("");
 
   const brandName = $derived(session.branding.appName || "ZCode 门户");
@@ -12,11 +12,21 @@
 
   async function doLogin() {
     liErr = "";
+    liNotice = "";
     try { await login(liUser, liPass); } catch (e) { liErr = e.message; }
   }
   async function doRegister() {
     rgErr = "";
-    try { await register(rgUser, rgPass, rgDisplay); } catch (e) { rgErr = e.message; }
+    try {
+      const r = await register(rgUser, rgPass, rgDisplay);
+      if (r?.pending) {
+        // 自注册账号默认待激活：提示后切到登录页
+        rgUser = rgDisplay = rgPass = "";
+        liNotice = r.message || "注册成功，账号需管理员激活后才能登录，请联系管理员";
+        liUser = "";
+        tab = "login";
+      }
+    } catch (e) { rgErr = e.message; }
   }
 </script>
 
@@ -38,6 +48,7 @@
         <div class="field"><label class="field-label" for="li-user">用户名</label><input id="li-user" autocomplete="username" bind:value={liUser} /></div>
         <div class="field"><label class="field-label" for="li-pass">密码</label><input id="li-pass" type="password" autocomplete="current-password" bind:value={liPass} /></div>
         <div class="msg-err">{liErr}</div>
+        {#if liNotice}<div class="msg-ok">{liNotice}</div>{/if}
         <button style="width:100%">登录</button>
       </form>
     {:else}
@@ -46,6 +57,7 @@
         <div class="field"><label class="field-label" for="rg-display">显示名（可选）</label><input id="rg-display" bind:value={rgDisplay} /></div>
         <div class="field"><label class="field-label" for="rg-pass">密码（至少 6 位）</label><input id="rg-pass" type="password" bind:value={rgPass} /></div>
         <div class="msg-err">{rgErr}</div>
+        <div class="hint-line">注册后账号为待激活状态，需管理员在后台开通后方可登录</div>
         <button style="width:100%">创建账号</button>
       </form>
     {/if}
@@ -63,6 +75,7 @@
   }
   h1 { font-size: var(--fs-title); font-weight: 600; margin: 18px 0 2px; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .hint-line { color: var(--muted); font-size: 12px; margin: 4px 0 2px; }
   @media (max-width: 768px) {
     .gate { padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); height: var(--app-h, 100dvh); min-height: 0; overflow-y: auto; }
     .box { width: 100%; max-width: 420px; padding: 24px; border-radius: 16px; }

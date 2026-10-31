@@ -48,11 +48,13 @@ export async function login(username, password) {
 }
 
 export async function register(username, password, displayName) {
-  const me = await api("/api/register", { method: "POST", body: JSON.stringify({ username, password, displayName }) });
-  session.me = me;
+  const res = await api("/api/register", { method: "POST", body: JSON.stringify({ username, password, displayName }) });
+  if (res.pending) return res; // 自注册待激活：不进入工作台
+  session.me = res;
   const fresh = await api("/api/me").catch(() => null);
   if (fresh) adoptMe(fresh);
   await loadWorkspaces();
+  return res;
 }
 
 export async function logout() {

@@ -545,7 +545,8 @@ function getSessionUser(req) {
   if (!isValidUid(uid) || Date.now() - Number(ts) > CONFIG.sessionTtl * 1000) return null;
   const users = loadUsers();
   if (!users[uid]) return null;
-  return { uid, username: users[uid].username };
+  // active 未定义的老账号视为已启用；自注册新账号默认 false
+  return { uid, username: users[uid].username, active: users[uid].active !== false };
 }
 
 /** 独立管理员会话：cookie zadmin = sign("admin|ts")，与用户会话完全分开 */
@@ -748,13 +749,13 @@ route("POST", /^\/api\/register$/, async (req, res) => {
   const users = loadUsers();
   const uid = uidOf(username);
   if (users[uid]) return send(res, 409, { error: "用户名已存在" });
-  users[uid] = { username, displayName: cleanText(displayName) || username, ...hashPassword(password), created: Date.now() };
+  // 自注册账号默认待激活，需管理员在 /admin 启用后才能登录
+  users[uid] = { username, displayName: cleanText(displayName) || username, ...hashPassword(password), created: Date.now(), active: false };
   saveUsers(users);
   ensureUserHome(uid);
   fs.mkdirSync(userWsRoot(uid), { recursive: true });
-  log(`registered: ${username} (${uid})`);
-  const cookie = `zportal=${encodeURIComponent(sign(`${uid}|${Date.now()}`))}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${CONFIG.sessionTtl}`;
-  send(res, 200, { ok: true, uid, username }, { "Set-Cookie": cookie });
+  log(`registered (pending activation): ${username} (${uid})`);
+  send(res, 200, { ok: true, pending: true, message: "注册成功，账号需管理员激活后才能登录，请联系管理员" });
 });
 
 route("POST", /^\/api\/login$/, async (req, res) => {
@@ -763,6 +764,7 @@ route("POST", /^\/api\/login$/, async (req, res) => {
   const uid = uidOf(username || "");
   const rec = users[uid];
   if (!rec || !verifyPassword(password || "", rec)) return send(res, 401, { error: "用户名或密码错误" });
+  if (rec.active === false) return send(res, 403, { error: "账号待激活：请联系管理员开通后再登录" });
   ensureUserHome(uid);
   const cookie = `zportal=${encodeURIComponent(sign(`${uid}|${Date.now()}`))}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${CONFIG.sessionTtl}`;
   send(res, 200, { ok: true, uid, username: rec.username }, { "Set-Cookie": cookie });
@@ -1425,9 +1427,31 @@ route("GET", /^\/api\/admin\/users$/, async (req, res) => {
   const users = loadUsers();
   const list = Object.entries(users).map(([uid, u]) => ({
     uid, username: u.username, displayName: u.displayName, created: u.created,
+    active: u.active !== false, // 老账号视为已启用
     hasHome: fs.existsSync(userHome(uid)),
   }));
   send(res, 200, { users: list });
+});
+
+// 启用 / 禁用租户账号（禁用即待激活：旧会话立即失效，运行中进程终止）
+route("POST", /^\/api\/admin\/set-user-active$/, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { uid, active } = await readJson(req);
+  if (!isValidUid(uid || "")) return send(res, 400, { error: "uid 非法" });
+  if (typeof active !== "boolean") return send(res, 400, { error: "active 需为布尔值" });
+  const users = loadUsers();
+  if (!users[uid]) return send(res, 404, { error: "租户不存在" });
+  users[uid].active = active;
+  saveUsers(users);
+  let killed = 0;
+  if (!active) {
+    for (const [key, info] of runningSessions) {
+      if (key.startsWith(uid + "/")) { try { process.kill(info.pid); } catch { /* ignore */ } runningSessions.delete(key); killed++; }
+    }
+  }
+  audit({ ts: new Date().toISOString(), uid, rule: active ? "admin 启用账号" : "admin 禁用账号（待激活）", username: users[uid].username });
+  log(`admin set-user-active: ${users[uid].username} → ${active ? "enabled" : "disabled"}${killed ? ` (killed ${killed} runs)` : ""}`);
+  send(res, 200, { ok: true, uid, active, killed });
 });
 
 // 手动把当前全局模型配置推送到所有用户（一般自动推送，这兜底给「改了配置但部分用户目录损坏」的场景）
@@ -1647,6 +1671,8 @@ const server = http.createServer(async (req, res) => {
       if (r.auth) {
         const user = getSessionUser(req);
         if (!user) return send(res, 401, { error: "未登录" });
+        // 账号被禁用（待激活）后，旧 cookie 一并失效，防止先登录后被禁用仍可操作
+        if (user.active === false) return send(res, 403, { error: "账号待激活：请联系管理员开通" });
         return await r.handler(req, res, m, user);
       }
       return await r.handler(req, res, m, null);
