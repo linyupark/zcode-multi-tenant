@@ -5,6 +5,7 @@ import { chat, replay, clearChat } from "./chat.svelte.js";
 
 /** 会话态：登录账号 / 工作区 / 当前会话 / 权限模式 / 白标 */
 export const session = $state({
+  booted: false,        // 启动探测完成（true 后才渲染 Gate，避免已登录用户刷新闪登录页）
   me: null,             // /api/me 结果（uid/username/model/providers/mode/branding）
   branding: {},         // 公开 /api/branding（登录页也要用）
   workspaces: [],
@@ -26,8 +27,12 @@ export async function boot() {
   try {
     const me = await api("/api/me");
     adoptMe(me);
+    session.booted = true; // 先亮出工作台，侧栏数据后台补齐
     await loadWorkspaces();
-  } catch { /* 未登录 */ }
+  } catch {
+    session.me = null;
+    session.booted = true;
+  }
 }
 
 function adoptMe(me) {

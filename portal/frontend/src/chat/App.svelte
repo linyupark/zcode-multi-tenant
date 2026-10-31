@@ -22,8 +22,20 @@
 
 <svelte:window onresize={onResize} onkeydown={onKeydown} />
 
-{#if session.me}
+{#if !session.booted}
+  <div class="boot">
+    <span class="mark">{session.branding.logoText || "Z"}</span>
+  </div>
+{:else if session.me}
   <Shell />
 {:else}
   <Gate />
 {/if}
+
+<style>
+  .boot{min-height:100vh;display:grid;place-items:center;background:var(--ground)}
+  .mark{
+    width:34px;height:34px;border-radius:8px;background:var(--accent);color:#fff;
+    display:grid;place-items:center;font-weight:600;font-size:16px;
+  }
+</style>
