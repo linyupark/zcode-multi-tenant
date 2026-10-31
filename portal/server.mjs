@@ -898,6 +898,12 @@ route("GET", /^\/api\/skills$/, async (req, res, m, user) => {
   send(res, 200, { skills });
 }, { auth: true });
 
+// 租户可见的 MCP 服务清单：只暴露 id 与类型，不含 command/env/headers 等敏感字段
+route("GET", /^\/api\/mcp$/, async (req, res, m, user) => {
+  const cfg = loadAdminMcp();
+  send(res, 200, { servers: Object.entries(cfg.servers || {}).map(([id, s]) => ({ id, kind: s.url ? "url" : "command" })) });
+}, { auth: true });
+
 // --- chat: dispatch + SSE（支持模型自动回退：默认模型失败且未产生内容时，按 fallbacks 顺序重试） ---
 
 route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
