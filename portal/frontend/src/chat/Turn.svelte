@@ -12,9 +12,7 @@
     openTool = openTool === i ? -1 : i;
   }
 
-  const showLoading = $derived(
-    t.streaming && !t.text && !t.think && !t.tools?.length && !t.fallbacks?.length && !t.violations?.length,
-  );
+  const showLoading = $derived(t.streaming && !t.text);
   const emptyTurn = $derived(
     !t.streaming && !t.text && !t.think && !t.tools?.length,
   );
@@ -70,8 +68,8 @@
   .assistant .bubble{background:var(--surface);border:1px solid var(--border);border-radius:3px 14px 14px 14px;width:100%;max-width:860px}
   .msg-files{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
   .file-chip{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.32);border-radius:6px;padding:2px 8px;font-size:12px;line-height:1.5}
-  /* 工具调用图标条 */
-  .tool-icons{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+  /* 工具调用图标条：紧凑，靠在思考块/文本之间 */
+  .tool-icons{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 2px}
   .tool-icon{width:28px;height:28px;min-width:28px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--muted);display:grid;place-items:center;padding:0;cursor:pointer;font-size:14px}
   .tool-icon:hover{color:var(--accent);border-color:var(--accent)}
   .tool-icon.on{color:var(--accent);border-color:var(--accent);background:#eef7f9}

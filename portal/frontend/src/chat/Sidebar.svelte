@@ -43,10 +43,15 @@
       {/each}
     </div>
   </div>
-  <div class="nav-sec">账号</div>
-  <a class="nav-item" onclick={() => { closeDrawer(); openPanel("passwd"); }}>修改密码</a>
-  <a class="nav-item" onclick={logout}>退出登录</a>
-  <div class="foot">{session.me.displayName || session.me.username}</div>
+  <div class="foot">
+    <span class="foot-name" title={session.me.username}>{session.me.displayName || session.me.username}</span>
+    <button class="foot-btn" title="退出登录" aria-label="退出登录" onclick={logout}>
+      <i class="i-lucide-log-out"></i>
+    </button>
+    <button class="foot-btn" title="修改密码" aria-label="修改密码" onclick={() => { closeDrawer(); openPanel("passwd"); }}>
+      <i class="i-lucide-key-round"></i>
+    </button>
+  </div>
 </aside>
 {#if ui.drawer}<div id="drawer-overlay" onclick={closeDrawer}></div>{/if}
 
@@ -56,7 +61,10 @@
   .drawer-head{display:flex;align-items:center}
   .drawer-head .brand{flex:1;min-width:0;padding:4px 10px 16px}
   .drawer-close{display:none;width:36px;height:36px;padding:0;place-items:center;flex:0 0 auto;color:var(--muted);font-size:16px}
-  .foot{margin-top:auto;font-size:12px;color:var(--muted);padding:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .foot{margin-top:auto;display:flex;align-items:center;gap:2px;padding:8px 6px}
+  .foot-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--muted)}
+  .foot-btn{width:30px;height:30px;border-radius:6px;display:grid;place-items:center;font-size:15px;color:var(--muted);background:none;border:0;cursor:pointer;flex:0 0 auto}
+  .foot-btn:hover{background:var(--raised);color:var(--accent)}
   #drawer-overlay{display:none}
   /* 移动端权限模式：小字单选行（替代原生下拉） */
   .mode-list{display:flex;flex-direction:column;gap:2px;padding:0 4px}
@@ -78,7 +86,6 @@
     .mobile-mode{display:block;padding:4px 4px 0}
     .mobile-mode select{font-size:16px;padding:9px 10px}
     .nav-sec{display:block;padding:14px 10px 5px}
-    .foot{display:block}
   }
   .mobile-mode{display:none}
   @media (max-width:768px){

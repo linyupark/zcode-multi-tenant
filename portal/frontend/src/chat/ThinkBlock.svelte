@@ -23,7 +23,7 @@
 </details>
 
 <style>
-  .think{border:1px solid var(--rule);border-radius:8px;margin-bottom:8px;overflow:hidden;background:var(--raised)}
+  .think{border:1px solid var(--rule);border-radius:8px;margin-bottom:4px;overflow:hidden;background:var(--raised)}
   summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:7px;padding:6px 12px;font-size:12.5px;color:var(--muted);user-select:none}
   summary::-webkit-details-marker{display:none}
   summary:hover{color:var(--text)}

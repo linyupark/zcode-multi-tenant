@@ -59,6 +59,8 @@ button:disabled{opacity:.55;cursor:default}
 
 /* ---------- Markdown 排版（{@html} 注入，全局作用域） ---------- */
 .md-body{line-height:1.65;font-size:14px}
+.md-body > :first-child{margin-top:0}
+.md-body > :last-child{margin-bottom:0}
 .md-body.src{white-space:pre-wrap;font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--raised);border-radius:6px;padding:10px 12px}
 .md-body h1,.md-body h2,.md-body h3,.md-body h4,.md-body h5,.md-body h6{margin:14px 0 6px;line-height:1.35;font-weight:600}
 .md-body h1{font-size:19px}.md-body h2{font-size:17px}.md-body h3{font-size:15px}
