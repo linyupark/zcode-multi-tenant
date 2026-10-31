@@ -26,34 +26,8 @@
 {/if}
 <div class="msg-row assistant">
   <div class="who">ZCode</div>
-  <div class="bubble">
-    {#if t.think}<ThinkBlock think={t.think} done={!t.streaming || !!t.text} />{/if}
-    {#if t.tools?.length}
-      <div class="tool-icons">
-        {#each t.tools as tool, i (tool.callId || i)}
-          <button type="button" class="tool-icon" class:on={openTool === i} title="{tool.name}{tool.brief ? " · " + tool.brief : ""}" onclick={() => toggleTool(i)}>
-            <i class={toolIconClass(tool.name)}></i>
-          </button>
-        {/each}
-      </div>
-    {/if}
-    {#if openTool >= 0 && t.tools[openTool]}
-      {@const item = t.tools[openTool]}
-      <div class="tool-detail">{item.name}{item.brief ? " — " + item.brief : ""}{"\n\n"}{item.detail || ""}</div>
-    {/if}
-    {#each t.fallbacks || [] as fb}
-      <div class="fallback-note">模型 {fb.from} 调用失败，已自动切换到 {fb.to}{fb.reason ? `（${fb.reason.slice(0, 60)}）` : ""}</div>
-    {/each}
-    {#each t.violations || [] as v}
-      <div class="violation-note">安全拦截（{v.tool}）：{v.message}。本次执行已终止，可调整需求后继续。</div>
-    {/each}
-    {#if t.text}<MarkdownOut raw={t.text} />{/if}
-    {#if t.outputs?.length}<FileCards files={t.outputs} />{/if}
-    {#if showLoading}
-      <div class="loading-dots" aria-label="正在思考"><i></i><i></i><i></i></div>
-    {/if}
-    {#if emptyTurn}（这轮由后台子任务完成，无直接输出）{/if}
-  </div>
+  <!-- 白敏感：pre-wrap 气泡内块间不能有任何换行/空格，否则渲染成空行 -->
+  <div class="bubble">{#if t.think}<ThinkBlock think={t.think} done={!t.streaming || !!t.text} />{/if}{#if t.tools?.length}<div class="tool-icons">{#each t.tools as tool, i (tool.callId || i)}<button type="button" class="tool-icon" class:on={openTool === i} title="{tool.name}{tool.brief ? " · " + tool.brief : ""}" onclick={() => toggleTool(i)}><i class={toolIconClass(tool.name)}></i></button>{/each}</div>{/if}{#if openTool >= 0 && t.tools[openTool]}{@const item = t.tools[openTool]}<div class="tool-detail">{item.name}{item.brief ? " — " + item.brief : ""}{"\n\n"}{item.detail || ""}</div>{/if}{#each t.fallbacks || [] as fb}<div class="fallback-note">模型 {fb.from} 调用失败，已自动切换到 {fb.to}{fb.reason ? `（${fb.reason.slice(0, 60)}）` : ""}</div>{/each}{#each t.violations || [] as v}<div class="violation-note">安全拦截（{v.tool}）：{v.message}。本次执行已终止，可调整需求后继续。</div>{/each}{#if t.text}<MarkdownOut raw={t.text} />{/if}{#if t.outputs?.length}<FileCards files={t.outputs} />{/if}{#if showLoading}<div class="loading-dots" aria-label="正在思考"><i></i><i></i><i></i></div>{/if}{#if emptyTurn}（这轮由后台子任务完成，无直接输出）{/if}</div>
 </div>
 
 <style>
