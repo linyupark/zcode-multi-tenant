@@ -64,5 +64,8 @@ export default defineConfig({
     "i-lucide-plus", "i-lucide-paperclip", "i-lucide-send-horizontal", "i-lucide-square",
     "i-lucide-trash-2", "i-lucide-download", "i-lucide-log-out", "i-lucide-lock",
     "i-lucide-folder-open", "i-simple-icons-github",
+    "i-lucide-folder", "i-lucide-image", "i-lucide-table", "i-lucide-file-code",
+    "i-lucide-file-archive", "i-lucide-file-video", "i-lucide-file-audio", "i-lucide-file",
+    "i-lucide-chevron-right", "i-lucide-chevron-down", "i-lucide-refresh-cw", "i-lucide-eye",
   ],
 });

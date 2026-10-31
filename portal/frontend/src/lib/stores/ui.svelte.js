@@ -5,6 +5,7 @@ export const ui = $state({
   atts: [],               // 待发送附件 [{wsPath, filename}]
   status: "",             // composer 状态行（原 #status）
   dragDepth: 0,           // 全屏拖拽计数
+  pendingPreview: null,   // 打开文件面板时自动预览的工作区相对路径（消息产出卡片用）
 });
 
 export function setStatus(s) { ui.status = s || ""; }

@@ -1,6 +1,7 @@
 <script>
   import MarkdownOut from "./MarkdownOut.svelte";
   import ThinkBlock from "./ThinkBlock.svelte";
+  import FileCards from "./FileCards.svelte";
   import { toolIconClass } from "../lib/tools.js";
 
   let { t } = $props();
@@ -49,6 +50,7 @@
       <div class="violation-note">安全拦截（{v.tool}）：{v.message}。本次执行已终止，可调整需求后继续。</div>
     {/each}
     {#if t.text}<MarkdownOut raw={t.text} />{/if}
+    {#if t.outputs?.length}<FileCards files={t.outputs} />{/if}
     {#if showLoading}
       <div class="loading-dots" aria-label="正在思考"><i></i><i></i><i></i></div>
     {/if}

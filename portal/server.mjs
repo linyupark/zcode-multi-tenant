@@ -927,6 +927,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
   let sessionIdSeen = null;
   const homePath = ensureUserHome(user.uid);
   const wsRoot = path.dirname(dir); // 本租户全部工作区的根（读取放行范围）
+  const writtenFiles = new Set(); // 本轮 run 中 Write/Edit 类工具写过的绝对路径
   const cleanup = () => { sseClients.delete(key); runningSessions.delete(key); };
   req.on("close", () => { aborted = true; try { activeChild?.kill(); } catch { /* noop */ } cleanup(); });
 
@@ -953,6 +954,12 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
       if (ev.type === "tool.updated" || ev.type === "tool.execution" || ev.type === "tool_execution" || ev.type === "tool.execution_start" || ev.type === "tool_call") {
         sawTool = true;
         const toolName = String(p.toolName || p.name || p.tool || "tool");
+        // 记录 AI 写入的文件（Write/Edit 类），end 时随事件下发渲染下载卡片
+        if (WRITE_TOOL_RE.test(toolName)) {
+          const wi = p.input ?? p.args ?? {};
+          const fp = wi && (wi.file_path || wi.filePath || wi.path || wi.notebook_path);
+          if (typeof fp === "string" && fp.trim()) writtenFiles.add(path.normalize(fp.trim()));
+        }
         const reason = guardrailCheck({ tool: toolName, input: p.input ?? p.args ?? p.summary ?? "", wsPath: dir, wsRoot, homePath });
         if (reason) {
           audit({ ts: new Date().toISOString(), uid: user.uid, ws, runId, tool: toolName, rule: reason, input: String(typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? p.args ?? "")).slice(0, 400) });
@@ -1001,7 +1008,16 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
   }
 
   recordSession(user.uid, ws || "default", sessionIdSeen);
-  ssePush(key, "end", { code: lastRes.ok ? 0 : (lastRes.code ?? 1), sessionId: sessionIdSeen, fallbackCount, error: lastRes.ok ? null : (lastRes.error || null) });
+  // 本轮 AI 产出文件（写工作区内的、且真实存在的），end 事件下发给前端渲染卡片
+  const imageRe = /\.(png|jpe?g|gif|webp|svg)$/i;
+  const outFiles = [...writtenFiles].map((abs) => {
+    if (!abs.startsWith(dir + path.sep)) return null;
+    const rel = path.relative(dir, abs).split(path.sep).join("/");
+    let exists = false, size = null;
+    try { const st = fs.statSync(abs); if (st.isFile()) { exists = true; size = st.size; } } catch { /* 未落盘或已删 */ }
+    return { path: rel, filename: path.basename(abs), size, exists, image: imageRe.test(rel) };
+  }).filter(Boolean);
+  ssePush(key, "end", { code: lastRes.ok ? 0 : (lastRes.code ?? 1), sessionId: sessionIdSeen, fallbackCount, error: lastRes.ok ? null : (lastRes.error || null), files: outFiles });
   cleanup();
   // 必须显式结束 SSE 响应：否则浏览器 reader.read() 永远等不到 done，
   // 前端 sendMsg 的 finally 不执行，发送按钮会一直停在「停止」。
@@ -1182,7 +1198,8 @@ function recordSession(uid, ws, sessionId) {
 
 // ---------- 会话回放：读 message/part 表，重组为轮次列表（游标分页，默认最近 10 轮） ----------
 
-function sessionMessages(uid, sessionId, beforeSeq, limit) {
+const WRITE_TOOL_RE = /^(write|edit|multiedit|notebookedit)$/i;
+function sessionMessages(uid, sessionId, beforeSeq, limit, wsAbsParam) {
   const dbFile = sessionsDbPath(uid);
   if (!fs.existsSync(dbFile)) return { turns: [], hasMore: false };
   let db;
@@ -1236,7 +1253,7 @@ function sessionMessages(uid, sessionId, beforeSeq, limit) {
       if (it.role === "user") {
         if (it.uiHidden) continue; // CLI 内部注入（agent 列表 / system reminder）不对租户展示
         if (cur) turns.push(cur);
-        cur = { seq: it.seq, user: "", files: [], think: "", tools: [], text: "" };
+        cur = { seq: it.seq, user: "", files: [], think: "", tools: [], text: "", _writes: [] };
         for (const p of it.parts) {
           if (p.type === "text" && p.text) cur.user += (cur.user ? "\n" : "") + p.text;
           else if (p.type === "file" && p.filename) cur.files.push({ filename: p.filename, mime: p.mime || "" });
@@ -1249,11 +1266,33 @@ function sessionMessages(uid, sessionId, beforeSeq, limit) {
             const input = p.state?.input ?? {};
             const brief = input.command || input.description || input.filePath || input.path || input.pattern || Object.values(input)[0] || "";
             cur.tools.push({ name: p.tool, brief: String(brief).slice(0, 120), detail: JSON.stringify(input, null, 1).slice(0, 4000) });
+            // Write/Edit 类工具 = AI 产出的文件，用于回复下方的下载卡片
+            if (WRITE_TOOL_RE.test(String(p.tool))) {
+              const fp = input.file_path || input.filePath || input.path || input.notebook_path;
+              if (typeof fp === "string" && fp.trim()) cur._writes.push(fp.trim());
+            }
           }
         }
       }
     }
     if (cur) turns.push(cur);
+    // AI 产出文件 → 工作区相对路径 + 大小/存在性，供回复下方的下载卡片
+    const wsAbs = path.resolve(wsAbsParam);
+    const imageRe = /\.(png|jpe?g|gif|webp|svg)$/i;
+    for (const t of turns) {
+      const seen = new Set();
+      t.outputs = (t._writes || []).map((fp) => {
+        const abs = path.isAbsolute(fp) ? path.normalize(fp) : path.resolve(wsAbs, fp);
+        if (seen.has(abs)) return null;
+        seen.add(abs);
+        if (!abs.startsWith(wsAbs + path.sep)) return null; // 只展示当前工作区内的产出
+        const rel = path.relative(wsAbs, abs).split(path.sep).join("/");
+        let exists = false, size = null;
+        try { const st = fs.statSync(abs); if (st.isFile()) { exists = true; size = st.size; } } catch { /* 已删除 */ }
+        return { path: rel, filename: path.basename(abs), size, exists, image: imageRe.test(rel) };
+      }).filter(Boolean);
+      delete t._writes;
+    }
     return { turns, hasMore };
   } finally { db.close(); }
 }
@@ -1262,7 +1301,7 @@ route("GET", /^\/api\/sessions\/(sess_[a-zA-Z0-9-]+)\/messages$/, async (req, re
   const q = new URL(req.url, "http://x").searchParams;
   const before = Number(q.get("before") || Number.MAX_SAFE_INTEGER);
   const limit = Math.min(Number(q.get("limit") || 10), 50);
-  send(res, 200, sessionMessages(user.uid, m[1], before, limit));
+  send(res, 200, sessionMessages(user.uid, m[1], before, limit, wsDir(user.uid, q.get("ws") || "default")));
 }, { auth: true });
 
 // 显式中断运行中的会话进程（页面刷新/close 也会 kill，这里给 UI 一个停止按钮）

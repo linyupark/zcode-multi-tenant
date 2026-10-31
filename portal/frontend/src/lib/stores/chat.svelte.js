@@ -83,6 +83,7 @@ export async function send(text) {
     text: "",
     fallbacks: [],
     violations: [],
+    outputs: [],
     streaming: true,
   };
   chat.turns.push(raw);
@@ -150,6 +151,7 @@ export async function send(text) {
         } else if (evName === "end") {
           setStatus(ev.code === 0 ? "完成" : (`退出码 ${ev.code}` + (ev.error ? "：" + String(ev.error).slice(0, 80) : "")));
           if (ev.sessionId) session.sessionId = ev.sessionId;
+          if (Array.isArray(ev.files) && ev.files.length) t.outputs = ev.files;
         } else if (evName === "error") {
           setStatus("错误: " + ev.message);
         }
