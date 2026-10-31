@@ -5,7 +5,7 @@
   import { fmtSize } from "../../lib/fmt.js";
   import { iconForFile, isImage } from "../../lib/files.js";
   import { session } from "../../lib/stores/session.svelte.js";
-  import { closePanel, ui } from "../../lib/stores/ui.svelte.js";
+  import { closePanel, hasAtt, toggleAtt, ui } from "../../lib/stores/ui.svelte.js";
 
   let tree = $state(null); // null = 加载中
   let preview = $state(null); // {ws, rel}
@@ -68,11 +68,16 @@
 
 <div class="head-row">
   <h2>工作区文件 <span class="pill">{session.ws}</span></h2>
-  <button class="ghost icon-btn" title="刷新文件列表" aria-label="刷新文件列表" onclick={loadTree}>
-    <i class="i-lucide-refresh-cw"></i>
-  </button>
+  <span class="head-actions">
+    <button class="ghost icon-btn" title="刷新文件列表" aria-label="刷新文件列表" onclick={loadTree}>
+      <i class="i-lucide-refresh-cw"></i>
+    </button>
+    <button class="ghost icon-btn" title="关闭" aria-label="关闭" onclick={closePanel}>
+      <i class="i-lucide-x"></i>
+    </button>
+  </span>
 </div>
-<div class="sub">AI 的产出物都在这里，点击预览，可下载保存到你自己的电脑</div>
+<div class="sub">AI 的产出物都在这里，点击预览；回形针把文件引入对话作为附件</div>
 
 <div class="tree">
   {#if tree === null}
@@ -102,6 +107,11 @@
             <i class="fi" class:img={isImage(n.name)}><i class={iconForFile(n.name)}></i></i>
             <span class="nm">{n.name}</span>
             <span class="sz">{fmtSize(n.size)}</span>
+            <button class="att-btn" class:on={hasAtt(n.rel)} title={hasAtt(n.rel) ? "已引入对话，点击移除" : "引入到对话框作为附件"}
+              aria-label={hasAtt(n.rel) ? "移除附件" : "引入到对话框"}
+              onclick={(e) => { e.stopPropagation(); toggleAtt(n.rel, n.name); }}>
+              <i class="i-lucide-paperclip"></i>
+            </button>
           </div>
         {/if}
       {/each}
@@ -114,7 +124,13 @@
   <div class="file-preview" bind:this={previewEl}>
     <div class="fp-head">
       <b class="mono fp-name">{preview.rel}</b>
-      <span class="fp-actions"><button class="ghost" onclick={download}>下载到本地</button><button class="ghost" onclick={() => (preview = null)}>收起</button></span>
+      <span class="fp-actions">
+        <button class="ghost" class:attached={hasAtt(preview.rel)} onclick={() => toggleAtt(preview.rel, preview.rel.split("/").pop())}>
+          {hasAtt(preview.rel) ? "已引入对话" : "引入对话"}
+        </button>
+        <button class="ghost" onclick={download}>下载到本地</button>
+        <button class="ghost" onclick={() => (preview = null)}>收起</button>
+      </span>
     </div>
     {#if previewData?.img}
       <img class="fp-img" src={previewData.img} alt={preview.rel} />
@@ -124,18 +140,23 @@
   </div>
 {/if}
 
-<div class="btn-row"><button class="ghost" onclick={closePanel}>关闭</button></div>
-
 <style>
-  .head-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  /* 吸顶头部：滚动长列表时右上角的关闭/刷新按钮始终可见 */
+  .head-row{
+    position:sticky;top:-24px;z-index:2;
+    margin:-24px -24px 10px;padding:18px 24px 10px;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--surface);border-radius:var(--radius-sheet) var(--radius-sheet) 0 0;
+  }
   .head-row h2{display:flex;align-items:center;gap:8px}
+  .head-actions{display:flex;gap:6px;flex:0 0 auto}
   .icon-btn{width:32px;height:32px;padding:0;display:grid;place-items:center;font-size:15px;color:var(--muted)}
   .icon-btn:hover{color:var(--accent)}
   /* 文件树：色调分层行，无细线；悬停浅一度 */
   .tree{max-height:46vh;overflow-y:auto;font-size:13.5px;margin:0 -6px;padding:0 6px}
   .row{
     display:flex;align-items:center;gap:8px;height:34px;
-    padding-right:10px;border-radius:6px;cursor:pointer;user-select:none;
+    padding-right:8px;border-radius:6px;cursor:pointer;user-select:none;
     color:var(--text);
   }
   .row:hover{background:var(--raised)}
@@ -147,14 +168,25 @@
   .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .row:hover .nm{color:var(--accent)}
   .cnt,.sz{color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums;flex:0 0 auto}
+  /* 引入对话（回形针）：点击加入待发送附件，再点移除 */
+  .att-btn{
+    width:26px;height:26px;border-radius:6px;flex:0 0 auto;
+    display:grid;place-items:center;font-size:13px;
+    color:var(--muted);background:transparent;border:0;cursor:pointer;
+  }
+  .att-btn:hover{background:var(--active);color:var(--accent)}
+  .att-btn.on{color:var(--accent);background:var(--raised)}
   .empty-tree{color:var(--muted);padding:24px;text-align:center}
   .file-preview{margin-top:14px;border-top:1px solid var(--border);padding-top:14px}
   .fp-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px}
   .fp-name{font-size:12.5px}
+  .fp-actions button.attached{border-color:var(--accent);color:var(--accent)}
   .fp-img{max-width:100%;max-height:44vh;border-radius:var(--radius-card)}
   .fp-text{max-height:300px;overflow:auto;background:var(--raised);border-radius:var(--radius-card);padding:12px;font-family:"IBM Plex Mono",monospace;font-size:12px;white-space:pre-wrap}
   @media (max-width:768px){
+    .head-row{top:-18px;margin:-18px -16px 8px;padding:22px 16px 8px;border-radius:0}
     .tree{max-height:38vh}
+    .att-btn{width:34px;height:34px;font-size:15px}
     .fp-head{flex-wrap:wrap;gap:6px}
     .fp-name{flex:1 1 100%;min-width:0;overflow-wrap:anywhere;margin-bottom:2px}
     .fp-actions{width:100%}

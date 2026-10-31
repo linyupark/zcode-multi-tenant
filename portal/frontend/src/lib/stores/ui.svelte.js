@@ -14,3 +14,14 @@ export function closeDrawer() { ui.drawer = false; }
 export function toggleDrawer() { ui.drawer = !ui.drawer; }
 export function openPanel(name) { ui.panel = name; }
 export function closePanel() { ui.panel = null; }
+
+/** 引入/移除一个工作区文件到待发送附件（文件面板「引入对话」，免去重新上传） */
+export function toggleAtt(wsPath, filename) {
+  const i = ui.atts.findIndex((a) => a.wsPath === wsPath);
+  if (i >= 0) ui.atts.splice(i, 1);
+  else ui.atts.push({ wsPath, filename });
+  return i < 0;
+}
+export function hasAtt(wsPath) {
+  return ui.atts.some((a) => a.wsPath === wsPath);
+}
