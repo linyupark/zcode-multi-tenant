@@ -7,7 +7,6 @@
   import Composer from "./Composer.svelte";
   import DropOverlay from "./DropOverlay.svelte";
   import Modal from "./Modal.svelte";
-  import ModelPanel from "./panels/ModelPanel.svelte";
   import SkillsPanel from "./panels/SkillsPanel.svelte";
   import FilesPanel from "./panels/FilesPanel.svelte";
   import PasswordPanel from "./panels/PasswordPanel.svelte";
@@ -51,9 +50,7 @@
 
 <DropOverlay />
 
-{#if ui.panel === "model"}
-  <Modal><ModelPanel /></Modal>
-{:else if ui.panel === "skills"}
+{#if ui.panel === "skills"}
   <Modal><SkillsPanel /></Modal>
 {:else if ui.panel === "files"}
   <Modal width={600}><FilesPanel /></Modal>

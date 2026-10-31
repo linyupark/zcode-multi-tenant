@@ -6,6 +6,13 @@
   const brandName = $derived(session.branding.appName || "ZCode 门户");
   const logoUrl = $derived(session.branding.logoUrl || "");
   const logoText = $derived(session.branding.logoText || "");
+
+  // 移动端权限模式单选（与桌面顶栏下拉共用 session.mode，自动双向同步）
+  const MODES = [
+    { id: "yolo", label: "自动执行 · 可写入" },
+    { id: "plan", label: "只读规划 · 不改文件" },
+    { id: "guarded", label: "谨慎模式 · 高危需确认" },
+  ];
 </script>
 
 <aside id="sidebar" class:open={ui.drawer}>
@@ -24,19 +31,22 @@
   <div class="nav-sec">资源</div>
   <a class="nav-item" onclick={() => { closeDrawer(); openPanel("files"); }}>工作区文件</a>
   <a class="nav-item" onclick={() => { closeDrawer(); openPanel("skills"); }}>技能一览</a>
-  <a class="nav-item" onclick={() => { closeDrawer(); openPanel("model"); }}>模型信息</a>
   <div class="mobile-mode">
     <div class="nav-sec">权限模式</div>
-    <select bind:value={session.mode} aria-label="权限模式" onchange={() => { setStatus("权限模式已切换，下条消息生效"); closeDrawer(); }}>
-      <option value="yolo">自动执行 · 可写入工作区</option>
-      <option value="plan">只读规划 · 不改文件</option>
-      <option value="guarded">谨慎模式 · 高危操作需确认</option>
-    </select>
+    <div class="mode-list" role="radiogroup" aria-label="权限模式">
+      {#each MODES as m (m.id)}
+        <button class="mode-item" class:on={session.mode === m.id} role="radio" aria-checked={session.mode === m.id}
+          onclick={() => { session.mode = m.id; setStatus("权限模式已切换，下条消息生效"); closeDrawer(); }}>
+          <span class="dot" class:on={session.mode === m.id}></span>
+          <span class="mode-label">{m.label}</span>
+        </button>
+      {/each}
+    </div>
   </div>
   <div class="nav-sec">账号</div>
   <a class="nav-item" onclick={() => { closeDrawer(); openPanel("passwd"); }}>修改密码</a>
   <a class="nav-item" onclick={logout}>退出登录</a>
-  <div class="foot">{session.me.username} · {session.me.uid.slice(0, 8)}</div>
+  <div class="foot">{session.me.displayName || session.me.username}</div>
 </aside>
 {#if ui.drawer}<div id="drawer-overlay" onclick={closeDrawer}></div>{/if}
 
@@ -46,8 +56,19 @@
   .drawer-head{display:flex;align-items:center}
   .drawer-head .brand{flex:1;min-width:0;padding:4px 10px 16px}
   .drawer-close{display:none;width:36px;height:36px;padding:0;place-items:center;flex:0 0 auto;color:var(--muted);font-size:16px}
-  .foot{margin-top:auto;font-size:12px;color:var(--muted);padding:10px}
+  .foot{margin-top:auto;font-size:12px;color:var(--muted);padding:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #drawer-overlay{display:none}
+  /* 移动端权限模式：小字单选行（替代原生下拉） */
+  .mode-list{display:flex;flex-direction:column;gap:2px;padding:0 4px}
+  .mode-item{
+    display:flex;align-items:center;gap:9px;width:100%;height:34px;
+    padding:0 10px;border-radius:6px;border:0;background:none;
+    font:inherit;font-size:13px;color:var(--muted);cursor:pointer;text-align:left;
+  }
+  .mode-item.on{background:var(--raised);color:var(--text)}
+  .mode-item .dot{width:7px;height:7px;border-radius:99px;background:var(--control);flex:0 0 auto}
+  .mode-item.on .dot{background:var(--accent)}
+  .mode-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   @media (max-width:768px){
     #sidebar{position:fixed;top:0;bottom:0;left:0;width:min(88vw,340px);z-index:80;transform:translateX(-105%);transition:transform .22s ease;padding:10px 12px calc(12px + env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;box-shadow:0 0 40px rgba(19,20,22,.18);grid-row:auto;grid-column:auto}
     #sidebar.open{transform:translateX(0)}

@@ -546,7 +546,12 @@ function getSessionUser(req) {
   const users = loadUsers();
   if (!users[uid]) return null;
   // active 未定义的老账号视为已启用；自注册新账号默认 false
-  return { uid, username: users[uid].username, active: users[uid].active !== false };
+  return {
+    uid,
+    username: users[uid].username,
+    displayName: users[uid].displayName || users[uid].username,
+    active: users[uid].active !== false,
+  };
 }
 
 /** 独立管理员会话：cookie zadmin = sign("admin|ts")，与用户会话完全分开 */
