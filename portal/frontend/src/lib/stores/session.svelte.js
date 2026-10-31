@@ -115,5 +115,4 @@ export async function deleteSession(sid) {
 export function newSession() {
   closeDrawer();
   selectWs(session.ws, null);
-  setStatus("新会话");
 }
