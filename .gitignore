@@ -19,3 +19,7 @@ ref/
 portal/static/
 # 本仓库工作区的 zcode 会话/配置目录
 .zcode/
+# 手册生成管线工作目录（截图标注 + docx 产物）
+.manual/
+# 本地排查用的临时复现环境（租户 HOME 副本、测试脚本、SSE 抓包）
+.repro/

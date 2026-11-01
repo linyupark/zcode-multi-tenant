@@ -920,10 +920,48 @@ route("GET", /^\/api\/mcp$/, async (req, res, m, user) => {
   send(res, 200, { servers: Object.entries(cfg.servers || {}).map(([id, s]) => ({ id, kind: s.url ? "url" : "command" })) });
 }, { auth: true });
 
+// ---------- slash 归一化（技能斜杠调用的坑）----------
+// 内核 headless（0.17.x）的斜杠命令是硬编码白名单（/help /skill /model …），
+// 租户技能不会注册为命令：--prompt "/modelscope …" 会被判为未知命令直接返回
+// （多行 pretty JSON、无 result 事件、不调模型），门户侧表现为整链回退 + 前端「无输出」。
+// 派发前归一化：
+//   /<技能名> 参数 → /skill <技能名> 参数（官方命令，headless 已验证可触发技能）
+//   /<内置命令> …  → 原样放行
+//   其余 / 开头    → 前置一个空格按普通文本派发（内核不 trim 首空格，模型收到原文；
+//                     用户消息里中间位置的斜杠不受影响，只有整条以 / 开头才进命令解析）
+const CLI_BUILTIN_COMMANDS = new Set([
+  "help", "login", "logout", "compact", "init", "expert", "effort", "dwf",
+  "fork", "locale", "mcp", "plugins", "mode", "model", "new", "resume",
+  "rewind", "skill", "goal", "target",
+]);
+
+/** 该租户当前可用的技能名（用户级 + 当前工作区级，以含 SKILL.md 的目录为准） */
+function listSkillNames(uid, ws) {
+  const dirs = [path.join(userHome(uid), ".zcode", "skills")];
+  if (ws) dirs.push(path.join(wsDir(uid, ws), ".zcode", "skills"));
+  const names = new Set();
+  for (const dir of dirs) {
+    try {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true }))
+        if (e.isDirectory() && fs.existsSync(path.join(dir, e.name, "SKILL.md"))) names.add(e.name);
+    } catch { /* 目录不存在 */ }
+  }
+  return names;
+}
+
+function normalizePromptSlash(message, skills) {
+  const m = /^\/([a-zA-Z0-9_-]+)(?:\s+([\s\S]*))?$/.exec(message);
+  if (!m) return message.startsWith("/") ? ` ${message}` : message; // 裸 "/" 或带特殊字符
+  const [, name, rest] = m;
+  if (CLI_BUILTIN_COMMANDS.has(name.toLowerCase())) return message;
+  if (skills.has(name)) return `/skill ${name}${rest ? ` ${rest}` : ""}`;
+  return ` ${message}`; // 非技能非内置命令：按普通文本派发，模型仍能自行识别技能名
+}
+
 // --- chat: dispatch + SSE（支持模型自动回退：默认模型失败且未产生内容时，按 fallbacks 顺序重试） ---
 
 route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
-  const { ws, message, sessionId, mode, model, attachments } = await readJson(req);
+  let { ws, message, sessionId, mode, model, attachments } = await readJson(req);
   if (!message?.trim()) return send(res, 400, { error: "消息为空" });
   const dir = wsDir(user.uid, ws || "default");
   if (!dir.startsWith(userWsRoot(user.uid))) return send(res, 400, { error: "工作区非法" });
@@ -933,6 +971,8 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
     .filter((rel) => typeof rel === "string" && safeWsPath(user.uid, ws, path.dirname(rel) === "." ? rel : rel))
     .slice(0, 10);
   const runId = crypto.randomBytes(6).toString("hex");
+  // 斜杠归一化：技能调用改写为官方 /skill，其余 / 开头按普通文本（见函数注释）
+  message = normalizePromptSlash(message, listSkillNames(user.uid, ws || "default"));
   const key = `${user.uid}/${ws}/${runId}`;
 
   // SSE 响应
@@ -964,10 +1004,17 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
     activeChild = child;
     runningSessions.set(key, { pid: child.pid, started: Date.now() });
     let buf = "", sawResult = false, sawText = false, sawTool = false, sawError = null;
+    let rawBlock = null; // CLI 早退响应（/help 纯文本、Unknown command 多行 JSON）逐行解析失败时在这里攒块
     const onLine = (line) => {
       line = line.trim(); if (!line) return;
       let ev;
-      try { ev = JSON.parse(line); } catch { ssePush(key, "raw", { line }); return; }
+      try { ev = JSON.parse(line); }
+      catch {
+        rawBlock = rawBlock || [];
+        rawBlock.push(line);
+        ssePush(key, "raw", { line });
+        return;
+      }
       if (ev.session_id || ev.sessionId) sessionIdSeen = ev.session_id || ev.sessionId;
       if (ev.type === "result") sawResult = true;
       const p = ev.payload || {};
@@ -1001,11 +1048,33 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
     child.stderr.on("data", (c) => {
       const line = c.toString("utf8").trimEnd();
       ssePush(key, "stderr", { line });
-      if (!sawError && line) sawError = line.slice(0, 300);
+      // 「ZCode Built-in …」是内核内置端点租约刷新的生命周期日志（unchanged/skipped 等），
+      // 每次启动都打在 stderr 第一行；别让它顶掉后面真正的错误原因
+      if (!sawError && line && !/^ZCode Built-in /i.test(line)) sawError = line.slice(0, 300);
     });
     child.on("error", (e) => resolve({ ok: false, code: -1, error: e.message, produced: false }));
     child.on("close", (code) => {
       if (buf.trim()) onLine(buf);
+      // 早退响应兜底：内核命令（/help、Unknown command 等）不调模型直接打印响应就退出，
+      // 没有 result 事件。攒下的 raw 行整块解析——能解析出 {response} 信封用之，
+      // 否则按纯文本渲染，避免「无输出」+ 对同一条早退消息整链无谓回退
+      if (!sawResult && !sawText && rawBlock?.length) {
+        let text = null, sid = null;
+        try {
+          const obj = JSON.parse(rawBlock.join(""));
+          if (typeof obj.response === "string" && obj.response) { text = obj.response; sid = obj.sessionId || null; }
+        } catch { /* 非整块 JSON，按纯文本处理 */ }
+        if (text == null) {
+          const joined = rawBlock.join("\n").trim();
+          if (joined) text = joined;
+        }
+        if (text) {
+          if (sid) sessionIdSeen = sessionIdSeen || sid;
+          sawText = true;
+          sawError = null; // 早退响应即最终答复，stderr 的生命周期日志不当错误
+          ssePush(key, "cli", { type: "session.updated", sessionId: sid, payload: { content: text.slice(0, 4000) } });
+        }
+      }
       const produced = sawText || sawTool;
       resolve({ ok: sawResult, code, error: sawResult ? null : (sawError || ("exit " + code)), produced });
     });
