@@ -101,7 +101,7 @@
   <textarea bind:value={input} bind:this={inputEl} {placeholder} onkeydown={onKeydown} onpaste={onPaste}></textarea>
   <div class="bar">
     <button class="ghost attach" onclick={() => fileInput.click()} title="上传图片/文档给 AI 处理">
-      <i class="i-lucide-paperclip"></i>附件
+      <i class="i-lucide-paperclip"></i><span class="attach-text">附件</span>
     </button>
     <button class="ghost pick-btn" class:on={pickOpen} title="技能与 MCP 服务" onclick={togglePick}>
       <i class="i-lucide-puzzle"></i>
@@ -154,6 +154,11 @@
     textarea{min-height:48px;font-size:16px;padding:10px 12px;resize:none}
     .bar{gap:8px;margin-top:8px}
     .bar button{min-height:40px;padding:8px 14px}
+    /* 附件 + 技能 = 两个等大的方形图标按钮（附件去文字；此前 .bar button 的
+       padding 覆盖 .pick-btn 的 padding:0，34px 宽里挤 28px 内边距，图标被压瘪） */
+    .attach-text{display:none}
+    .bar .attach,.bar .pick-btn{width:40px;height:40px;min-height:40px;padding:0;justify-content:center}
+    .bar .attach i,.bar .pick-btn i{font-size:18px}
     .send .kbd{display:none}
     .status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .pick{left:8px;right:8px;width:auto;bottom:calc(100% - 4px)}
