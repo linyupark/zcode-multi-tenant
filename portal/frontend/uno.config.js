@@ -8,8 +8,14 @@ export default defineConfig({
   presets: [
     presetWind4(),
     presetIcons({
-      // lucide 用于 UI 与工具图标，simple-icons 用于第三方 logo（GitHub 等）
-      collections: { lucide: () => import("@iconify-json/lucide/icons.json").then((m) => m.default), "simple-icons": () => import("@iconify-json/simple-icons/icons.json").then((m) => m.default) },
+      // lucide 用于 UI 与工具图标，simple-icons 用于第三方 logo（GitHub 等）。
+      // JSON 模块必须带 import attributes：unocss 的原生 sync loader 走 Node ESM，
+      // 缺 with { type: "json" } 时每个图标报一次 ERR_IMPORT_ATTRIBUTE_MISSING
+      // （图标仍能经 vite 转换路径兜底生成，但构建输出被错误刷屏）
+      collections: {
+        lucide: () => import("@iconify-json/lucide/icons.json", { with: { type: "json" } }).then((m) => m.default),
+        "simple-icons": () => import("@iconify-json/simple-icons/icons.json", { with: { type: "json" } }).then((m) => m.default),
+      },
     }),
   ],
   theme: {
@@ -31,11 +37,8 @@ export default defineConfig({
       "pill-neutral-bg": "var(--pill-neutral-bg)",
       "pill-neutral-ink": "var(--pill-neutral-ink)",
     },
-    borderRadius: {
-      card: "var(--radius-card)",
-      control: "var(--radius-control)",
-      sheet: "var(--radius-sheet)",
-    },
+    // 注意：不要在这里加 borderRadius 自定义键——presetWind4 不会为它生成
+    // rounded-<key> 工具类，圆角请直接写 rounded-[var(--radius-*)]（见 shortcuts）
     fontFamily: {
       sans: '"IBM Plex Sans",Inter,system-ui,"PingFang SC","Microsoft YaHei",sans-serif',
       mono: '"IBM Plex Mono",ui-monospace,monospace',
@@ -43,14 +46,16 @@ export default defineConfig({
   },
   shortcuts: {
     // 侧栏（品牌 .brand 走 app.css 全局类，保持旧类名兼容管理员 customCSS）
-    "nav-item": "flex items-center gap-[9px] px-2.5 py-[7px] rounded-control text-muted text-[13.5px] cursor-pointer no-underline hover:bg-raised hover:text-ink",
-    "sess-item": "flex items-center gap-[9px] px-2.5 py-[5px] rounded-control text-muted text-[12.5px] cursor-pointer min-w-0 hover:bg-raised hover:text-ink",
+    // 圆角用任意值写法引用 CSS 变量：presetWind4 不为自定义 theme.borderRadius 键
+    // 生成 rounded-<key> 工具类（round-card/control/sheet 会报 unmatched）
+    "nav-item": "flex items-center gap-[9px] px-2.5 py-[7px] rounded-[var(--radius-control)] text-muted text-[13.5px] cursor-pointer no-underline hover:bg-raised hover:text-ink",
+    "sess-item": "flex items-center gap-[9px] px-2.5 py-[5px] rounded-[var(--radius-control)] text-muted text-[12.5px] cursor-pointer min-w-0 hover:bg-raised hover:text-ink",
     "nav-sec": "text-[12px] text-muted pt-3.5 px-2.5 pb-[5px]",
     // 表单 / 弹层
     field: "mb-3.5 block",
     "field-label": "block text-[12.5px] text-muted mb-[5px]",
     "btn-row": "flex gap-2.5 mt-3.5",
-    "panel-card": "bg-surface border border-line rounded-sheet p-6 w-[520px] max-h-[88vh] overflow-y-auto shadow-[0_8px_32px_rgba(0,0,0,0.12)]",
+    "panel-card": "bg-surface border border-line rounded-[var(--radius-sheet)] p-6 w-[520px] max-h-[88vh] overflow-y-auto shadow-[0_8px_32px_rgba(0,0,0,0.12)]",
     "msg-err": "text-[13px] min-h-5 my-1.5 text-negative",
     "msg-ok": "text-[13px] min-h-5 my-1.5 text-positive",
     pill: "inline-block text-[11.5px] px-2.5 py-0.5 rounded-full bg-pill-neutral-bg text-pill-neutral-ink whitespace-nowrap",

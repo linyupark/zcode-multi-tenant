@@ -10,7 +10,7 @@
   let tree = $state(null); // null = 加载中
   let preview = $state(null); // {ws, rel}
   let previewData = $state(null); // {img} | {text}
-  let previewEl;
+  let previewEl = $state(null); // bind:this 在 {#if} 条件块内，反复赋值需 $state（non_reactive_update）
   let reloadTick = $state(0);
   const openDirs = new SvelteSet();
 

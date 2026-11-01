@@ -84,7 +84,6 @@
     .drawer-close{display:grid}
     .drawer-head .brand{padding:2px 6px 14px}
     .mobile-mode{display:block;padding:4px 4px 0}
-    .mobile-mode select{font-size:16px;padding:9px 10px}
     .nav-sec{display:block;padding:14px 10px 5px}
   }
   .mobile-mode{display:none}

@@ -12,7 +12,7 @@
   let fileInput;
   let inputEl;
   let pickOpen = $state(false);
-  let pickEl;
+  let pickEl = $state(null); // bind:this 在 {#if} 条件块内，反复赋值需 $state（non_reactive_update）
   let skills = $state([]);
   let mcpServers = $state([]);
   const placeholder = $derived(mobileMQ.current ? "描述你的任务…" : "描述你的任务…（Ctrl+Enter 发送）");
