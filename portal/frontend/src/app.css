@@ -93,8 +93,6 @@ button:disabled{opacity:.55;cursor:default}
   .kv-row .v{min-width:0;overflow-wrap:anywhere}
 }
 
-/* ---------- 模拟登录（impersonation）布局 ----------
-   横幅存在时 #app 有三行（横幅/topbar/sheet）。#topbar、#sheet 是子组件
-   根元素，Svelte 会删除组件内「未使用」的跨组件选择器，因此行号规则必须放全局。 */
-#app.imp > #topbar{grid-row:2}
-#app.imp > #sheet{grid-row:3}
+/* ---------- 模拟登录（impersonation）----------
+   横幅渲染在 #app 网格之外（Shell 的 .shell-root 外壳），不占网格行，
+   topbar/sheet 行号保持稳定；无需全局行号规则。 */
