@@ -161,8 +161,11 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
   </div>
   <div id="sidebar">
     <div class="brand"><span class="mark">Z</span><span><span class="name">ZCode 门户</span><span class="env">内网自部署</span></span></div>
-    <a class="nav-item on">模型配置</a>
-    <a class="nav-item">租户管理</a>
+    <a class="nav-item on" data-page="model">模型配置</a>
+    <a class="nav-item" data-page="tenants">租户管理</a>
+    <a class="nav-item" data-page="brand">品牌与外观</a>
+    <a class="nav-item" data-page="policy">行为约束与审计</a>
+    <a class="nav-item" data-page="tools">技能与 MCP</a>
     <a class="nav-item" style="margin-top:auto" href="https://github.com/zai-org/ZCode" target="_blank" rel="noopener">内核与升级说明 ↗</a>
   </div>
   <div id="sheet">
@@ -172,6 +175,7 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
     </div>
     <div class="kpis" id="kpis"></div>
 
+    <div class="page" data-page="model">
     <section>
       <h2>Provider <span class="note">保存后立即写入全部租户的工作环境</span></h2>
       <div class="card" style="padding:20px">
@@ -226,7 +230,9 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
         </div>
       </div>
     </section>
+    </div><!-- /page model -->
 
+    <div class="page hidden" data-page="brand">
     <section>
       <h2>品牌与外观 <span class="note">白标定制：租户端登录页与侧栏即时生效</span></h2>
       <div class="card" style="padding:20px">
@@ -248,7 +254,9 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
         <div class="btn-row"><button id="btn-br-save">保存品牌配置</button><button class="ghost" id="btn-br-reset">恢复默认</button></div>
       </div>
     </section>
+    </div><!-- /page brand -->
 
+    <div class="page hidden" data-page="policy">
     <section>
       <h2>全局行为约束 <span class="note">AGENTS.md：注入每个租户的提示层约束（防误操作；服务端另有工具拦截 + 审计）</span></h2>
       <div class="card" style="padding:20px">
@@ -268,7 +276,9 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
         <div id="au-list"></div>
       </div>
     </section>
+    </div><!-- /page policy -->
 
+    <div class="page hidden" data-page="tools">
     <section>
       <h2>企业全局技能 <span class="note">全员共享，放这里 → 自动注入每个租户；官方内核技能随内核走，无需配置</span></h2>
       <div class="card" style="padding:20px">
@@ -310,7 +320,9 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
         </div>
       </div>
     </section>
+    </div><!-- /page tools -->
 
+    <div class="page hidden" data-page="tenants">
     <section>
       <h2>租户 <span class="note" id="user-note"></span><span class="note">自注册账号默认待激活，需在此启用后才能登录</span></h2>
       <table>
@@ -319,6 +331,7 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
       </table>
       <div class="empty hidden" id="user-empty">还没有租户注册。把门户地址发给同事即可自助注册（注册后需在此启用）。</div>
     </section>
+    </div><!-- /page tenants -->
   </div>
 </div>
 
@@ -348,7 +361,29 @@ async function enter() {
   $("gate").classList.add("hidden");
   $("shell").classList.remove("hidden");
   await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp(), loadAgentsMd(), loadAudit()]);
+  showPage("model");
 }
+
+/* 侧栏页面切换：标题/kpi 跟随，切页时刷新对应数据 */
+const PAGE_TITLES = { model: "全局模型配置", tenants: "租户管理", brand: "品牌与外观", policy: "行为约束与审计", tools: "技能与 MCP" };
+let adminAppName = "ZCode 门户";
+function showPage(page) {
+  document.querySelectorAll(".page").forEach((el) => el.classList.toggle("hidden", el.dataset.page !== page));
+  document.querySelectorAll("#sidebar .nav-item[data-page]").forEach((el) => el.classList.toggle("on", el.dataset.page === page));
+  const title = PAGE_TITLES[page] || "管理后台";
+  document.querySelector(".title-row h1").textContent = title;
+  document.title = title;
+  $("kpis").classList.toggle("hidden", page !== "model");
+  $("sync-state").classList.toggle("hidden", page !== "model");
+  document.querySelector("#topbar .crumb").innerHTML = `${esc(adminAppName)} / <b>${title}</b>`;
+  if (page === "tenants") loadUsers();
+  else if (page === "brand") loadBranding();
+  else if (page === "policy") { loadAgentsMd(); loadAudit(); }
+  else if (page === "tools") { loadSkills(); loadMcp(); }
+}
+document.querySelectorAll("#sidebar .nav-item[data-page]").forEach((el) => {
+  el.onclick = () => showPage(el.dataset.page);
+});
 
 /* model */
 function modelRowHtml(m = {}) {
@@ -479,6 +514,8 @@ $("btn-pv-push").onclick = async () => {
 /* ---------- 品牌与外观 ---------- */
 async function loadBranding() {
   const b = await api("/api/branding");
+  adminAppName = b.appName || "ZCode 门户"; // 侧栏品牌名与面包屑跟随白标
+  document.querySelector("#sidebar .brand .name").textContent = adminAppName;
   $("br-name").value = b.appName || "";
   $("br-logotext").value = b.logoText || "";
   $("br-logourl").value = b.logoUrl || "";
