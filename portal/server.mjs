@@ -68,6 +68,8 @@ const send = (res, code, body, headers = {}) => {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", ...headers });
   res.end(data);
 };
+// Node writeHead 的 Set-Cookie 需要数组形式才能发多个；headers["Set-Cookie"] 传数组时原生支持。
+// （writeHead 对 Set-Cookie 有特判：值是数组就发多条，无需特殊处理。）
 const readBody = (req, limit = 10 * 1024 * 1024) => new Promise((resolve, reject) => {
   const chunks = []; let size = 0;
   req.on("data", (c) => { size += c.length; if (size > limit) { reject(new Error("body too large")); req.destroy(); } else chunks.push(c); });
@@ -537,7 +539,10 @@ async function probeMcpServer(entry, timeoutMs = 15000) {
 // ---------- auth middleware ----------
 
 function getSessionUser(req) {
-  const sid = parseCookies(req).zportal;
+  // 会话来源优先级：zportal（租户自己的登录）> zimp（admin 模拟登录）。
+  // 分开存：模拟登录不覆盖租户/管理员在浏览器里的既有登录态。
+  const cookies = parseCookies(req);
+  const sid = cookies.zportal || cookies.zimp;
   if (!sid) return null;
   const value = unsign(sid);
   if (!value) return null;
@@ -551,6 +556,7 @@ function getSessionUser(req) {
     username: users[uid].username,
     displayName: users[uid].displayName || users[uid].username,
     active: users[uid].active !== false,
+    impersonated: !cookies.zportal && !!cookies.zimp || undefined,
   };
 }
 
@@ -652,19 +658,22 @@ function stampAgentsMd(uid) {
 function audit(entry) {
   try { fs.appendFileSync(AUDIT_LOG, JSON.stringify(entry) + "\n"); } catch { /* noop */ }
 }
-function readAudit(limit = 100, kind = null) {
+function readAudit(limit = 100, kind = "guardrail") {
   let rows = [];
   try {
     rows = fs.readFileSync(AUDIT_LOG, "utf8").split("\n").filter(Boolean)
       .map((l) => { try { return JSON.parse(l); } catch { return null; } })
       .filter(Boolean);
-  } catch { return { rows: [], stats: {} }; }
-  const filtered = kind ? rows.filter((r) => (r.kind || "guardrail") === kind) : rows;
+  } catch { return { rows: [], stats: {}, total: 0 }; }
+  // 旧记录没有 kind 字段，视为 guardrail（当时只有这一种审计）
+  const kindOf = (r) => r.kind || "guardrail";
+  const filtered = rows.filter((r) => kindOf(r) === kind);
   const stats = {};
-  for (const r of filtered) {
-    if ((r.kind || "guardrail") !== "guardrail") continue;
-    const key = r.rule || "(未知)";
-    stats[key] = (stats[key] || 0) + 1;
+  if (kind === "guardrail") {
+    for (const r of filtered) {
+      const key = r.rule || "(未知)";
+      stats[key] = (stats[key] || 0) + 1;
+    }
   }
   return { rows: filtered.slice(-limit).reverse(), stats, total: filtered.length };
 }
@@ -843,7 +852,11 @@ route("POST", /^\/api\/login$/, async (req, res) => {
 });
 
 route("POST", /^\/api\/logout$/, async (req, res) => {
-  send(res, 200, { ok: true }, { "Set-Cookie": "zportal=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0" });
+  // 同时清两类会话 cookie：正常登录（zportal）与 admin 模拟登录（zimp）
+  send(res, 200, { ok: true }, { "Set-Cookie": [
+    "zportal=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+    "zimp=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+  ] });
 });
 
 route("GET", /^\/api\/me$/, async (req, res, m) => {
@@ -857,7 +870,7 @@ route("GET", /^\/api\/me$/, async (req, res, m) => {
     baseURL: v.options?.baseURL,
     hasKey: Boolean(v.options?.apiKey),
   }]));
-  send(res, 200, { ...user, impersonated: impersonated.has(user.uid) || undefined, model: cfg.model?.main || "", providers, mode: cfg.permission?.mode || CONFIG.defaultMode, branding: loadBranding() });
+  send(res, 200, { ...user, model: cfg.model?.main || "", providers, mode: cfg.permission?.mode || CONFIG.defaultMode, branding: loadBranding() });
 }, { auth: true });
 
 // --- 模型配置：管理员统一配置（data/model.json），租户只读使用 ---
@@ -1487,8 +1500,6 @@ route("GET", /^\/api\/admin\/mcp\/tools$/, async (req, res) => {
 
 // admin 登录防爆破计数（按 IP，内存态）
 const adminFails = new Map();
-// impersonation 内存表：uid → 签发时间（重启即清空，模拟会话随 cookie TTL 自然过期）
-const impersonated = new Map();
 
 // --- admin 后台：独立密码门（/admin 页面 + /api/admin/* 接口，zadmin cookie 会话） ---
 // --- 品牌与外观：公开只读（登录页也要套用），仅 admin 可写 ---
@@ -1532,12 +1543,13 @@ route("GET", /^\/api\/admin\/agents-md$/, async (req, res) => {
   send(res, 200, { content: agentsMdContent(), custom: fs.existsSync(AGENTS_MD_FILE) });
 });
 
-// 行为审计：guardrail 拦截记录（含触发消息）+ 统计
+// 行为审计：guardrail 拦截记录（含触发消息）+ 统计。默认只出 guardrail——
+// 账号启停 / 模拟登录是 admin 自己的操作记录，不参与拦截核查（?kind=account|impersonate 可单独查）
 route("GET", /^\/api\/admin\/audit$/, async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const q = new URL(req.url, "http://x").searchParams;
   const limit = Math.min(Number(q.get("limit") || 100), 500);
-  send(res, 200, readAudit(limit, q.get("kind")));
+  send(res, 200, readAudit(limit, q.get("kind") || "guardrail"));
 });
 
 route("POST", /^\/api\/admin\/agents-md$/, async (req, res) => {
@@ -1635,8 +1647,9 @@ route("GET", /^\/api\/admin\/users$/, async (req, res) => {
   send(res, 200, { users: list });
 });
 
-// 以租户身份登录（impersonation）：admin 调试用，签发该租户的正常会话 cookie，
-// 新标签页打开即是该租户的完整视图。退出（/api/logout）即清掉模拟会话。
+// 以租户身份登录（impersonation）：admin 调试用，签发独立的 zimp 会话 cookie
+// （不覆盖浏览器里已有的租户/管理员登录态），新标签页打开即是该租户的完整视图。
+// 退出（/api/logout）即清掉模拟会话；重启后 zimp 仍有效（签名无状态），随 TTL 过期。
 route("POST", /^\/api\/admin\/impersonate$/, async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const { uid } = await readJson(req);
@@ -1646,8 +1659,7 @@ route("POST", /^\/api\/admin\/impersonate$/, async (req, res) => {
   if (!rec) return send(res, 404, { error: "租户不存在" });
   if (rec.active === false) return send(res, 400, { error: "账号待激活，请先启用再模拟登录" });
   ensureUserHome(uid);
-  impersonated.set(uid, Date.now());
-  const cookie = `zportal=${encodeURIComponent(sign(`${uid}|${Date.now()}`))}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${CONFIG.sessionTtl}`;
+  const cookie = `zimp=${encodeURIComponent(sign(`${uid}|${Date.now()}`))}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${CONFIG.sessionTtl}`;
   audit({ ts: new Date().toISOString(), kind: "impersonate", uid, username: rec.username, rule: "admin 以该租户身份登录（调试）" });
   log(`admin impersonate: ${rec.username} (${uid})`);
   send(res, 200, { ok: true, username: rec.username }, { "Set-Cookie": cookie });
