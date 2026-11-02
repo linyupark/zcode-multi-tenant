@@ -11,6 +11,7 @@ export async function runChatStream({ body, signal, onEvent }) {
   if (!resp.ok) {
     let msg = resp.status;
     try { msg = (await resp.json()).error || msg; } catch { /* keep status */ }
+    if (resp.status === 401) window.dispatchEvent(new CustomEvent("auth:expired", { detail: { error: msg } }));
     throw new Error(msg);
   }
   const reader = resp.body.getReader();

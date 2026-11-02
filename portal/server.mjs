@@ -42,7 +42,7 @@ const CONFIG = {
   port: Number(process.env.PORT || 9900),
   host: process.env.HOST || "0.0.0.0",
   secret: process.env.FLASK_SECRET || crypto.createHash("sha256").update(`zcode-portal|${DATA_DIR}`).digest("hex"), // 数据目录派生：重启不失效；生产建议显式设 FLASK_SECRET
-  sessionTtl: Number(process.env.SESSION_TTL_SEC || 8 * 3600),
+  sessionTtl: Number(process.env.SESSION_TTL_SEC || 30 * 24 * 3600), // 登录有效期默认 30 天
   kernelCli: process.env.ZCODE_CLI_ENTRY || KERNEL_CLI,
   defaultModel: process.env.ZCODE_MODEL || "",
   defaultMode: process.env.ZCODE_MODE || "yolo",

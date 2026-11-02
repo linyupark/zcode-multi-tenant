@@ -6,10 +6,30 @@
   import Gate from "./Gate.svelte";
   import Shell from "./Shell.svelte";
 
+  let expiredNotice = $state("");
+
+  // 任何接口 401（会话过期/被禁用）→ 清会话态回登录页，带一条提示
+  function onAuthExpired(e) {
+    session.booted = true;
+    session.me = null;
+    session.workspaces = [];
+    session.sessions = [];
+    session.sessionId = null;
+    session.sessionTitle = null;
+    ui.atts = [];
+    ui.panel = null;
+    ui.drawer = false;
+    expiredNotice = "登录已过期，请重新登录" + (e?.detail?.error && e.detail.error !== "未登录" ? `（${e.detail.error}）` : "");
+  }
+
   onMount(() => {
     const disposeHeight = installAppHeight();
+    window.addEventListener("auth:expired", onAuthExpired);
     boot();
-    return disposeHeight;
+    return () => {
+      disposeHeight();
+      window.removeEventListener("auth:expired", onAuthExpired);
+    };
   });
 
   function onResize() {
@@ -29,7 +49,7 @@
 {:else if session.me}
   <Shell />
 {:else}
-  <Gate />
+  <Gate notice={expiredNotice} />
 {/if}
 
 <style>

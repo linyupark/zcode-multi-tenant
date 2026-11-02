@@ -1,18 +1,22 @@
 <script>
   import { login, register, session } from "../lib/stores/session.svelte.js";
 
+  let { notice = "" } = $props();
+
   let tab = $state("login");
-  let liUser = $state(""), liPass = $state(""), liErr = $state(""), liNotice = $state("");
+  let liUser = $state(""), liPass = $state(""), liErr = $state(""), ownNotice = $state("");
   let rgUser = $state(""), rgDisplay = $state(""), rgPass = $state(""), rgErr = $state("");
 
   const brandName = $derived(session.branding.appName || "ZCode 门户");
   const tagline = $derived(session.branding.tagline || "独立工作区 · 官方内核与全局技能共享");
   const logoUrl = $derived(session.branding.logoUrl || "");
   const logoText = $derived(session.branding.logoText || "");
+  // liNotice：外部提示（过期/待激活回执）优先，登录结果可直接覆盖
+  const liNotice = $derived(ownNotice || notice);
 
   async function doLogin() {
     liErr = "";
-    liNotice = "";
+    ownNotice = "";
     try { await login(liUser, liPass); } catch (e) { liErr = e.message; }
   }
   async function doRegister() {
@@ -22,7 +26,7 @@
       if (r?.pending) {
         // 自注册账号默认待激活：提示后切到登录页
         rgUser = rgDisplay = rgPass = "";
-        liNotice = r.message || "注册成功，账号需管理员激活后才能登录，请联系管理员";
+        ownNotice = r.message || "注册成功，账号需管理员激活后才能登录，请联系管理员";
         liUser = "";
         tab = "login";
       }
