@@ -778,6 +778,7 @@ async function loadUsers() {
       ${u.active
         ? `<button class="ghost" data-set-active="0" data-uid="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">禁用</button>`
         : `<button data-set-active="1" data-uid="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">启用</button>`}
+      ${u.active ? `<button class="ghost" data-impersonate="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">模拟登录</button>` : ""}
       <button class="ghost" data-reset="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px">重置密码</button>
       <button class="ghost" data-del-user="${esc(u.uid)}" data-name="${esc(u.username)}" style="padding:3px 10px;color:var(--negative);border-color:var(--negative)">删除</button>
     </td>
@@ -791,6 +792,16 @@ async function loadUsers() {
       await api("/api/admin/set-user-active", { method: "POST", body: JSON.stringify({ uid: btn.dataset.uid, active }) });
       loadUsers();
     } catch (e) { alert("操作失败: " + e.message); }
+  });
+  // 模拟登录：以该租户身份在新标签页打开门户（调试用），退出即结束模拟
+  $("user-rows").querySelectorAll("[data-impersonate]").forEach((btn) => btn.onclick = async () => {
+    const name = btn.dataset.name;
+    if (!confirm(`以「${name}」的身份打开租户门户？（会话记录会写入该账号，退出登录即结束模拟）`)) return;
+    try {
+      await api("/api/admin/impersonate", { method: "POST", body: JSON.stringify({ uid: btn.dataset.impersonate }) });
+      window.open("/", "_blank");
+      loadUsers();
+    } catch (e) { alert("模拟登录失败: " + e.message); }
   });
   $("user-rows").querySelectorAll("[data-reset]").forEach((btn) => btn.onclick = async () => {
     const np = prompt(`为 ${btn.dataset.name} 设置新密码（至少 6 位）：`);

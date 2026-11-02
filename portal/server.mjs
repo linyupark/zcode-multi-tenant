@@ -857,7 +857,7 @@ route("GET", /^\/api\/me$/, async (req, res, m) => {
     baseURL: v.options?.baseURL,
     hasKey: Boolean(v.options?.apiKey),
   }]));
-  send(res, 200, { ...user, model: cfg.model?.main || "", providers, mode: cfg.permission?.mode || CONFIG.defaultMode, branding: loadBranding() });
+  send(res, 200, { ...user, impersonated: impersonated.has(user.uid) || undefined, model: cfg.model?.main || "", providers, mode: cfg.permission?.mode || CONFIG.defaultMode, branding: loadBranding() });
 }, { auth: true });
 
 // --- 模型配置：管理员统一配置（data/model.json），租户只读使用 ---
@@ -1487,6 +1487,8 @@ route("GET", /^\/api\/admin\/mcp\/tools$/, async (req, res) => {
 
 // admin 登录防爆破计数（按 IP，内存态）
 const adminFails = new Map();
+// impersonation 内存表：uid → 签发时间（重启即清空，模拟会话随 cookie TTL 自然过期）
+const impersonated = new Map();
 
 // --- admin 后台：独立密码门（/admin 页面 + /api/admin/* 接口，zadmin cookie 会话） ---
 // --- 品牌与外观：公开只读（登录页也要套用），仅 admin 可写 ---
@@ -1631,6 +1633,24 @@ route("GET", /^\/api\/admin\/users$/, async (req, res) => {
     hasHome: fs.existsSync(userHome(uid)),
   }));
   send(res, 200, { users: list });
+});
+
+// 以租户身份登录（impersonation）：admin 调试用，签发该租户的正常会话 cookie，
+// 新标签页打开即是该租户的完整视图。退出（/api/logout）即清掉模拟会话。
+route("POST", /^\/api\/admin\/impersonate$/, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { uid } = await readJson(req);
+  if (!isValidUid(uid || "")) return send(res, 400, { error: "uid 非法" });
+  const users = loadUsers();
+  const rec = users[uid];
+  if (!rec) return send(res, 404, { error: "租户不存在" });
+  if (rec.active === false) return send(res, 400, { error: "账号待激活，请先启用再模拟登录" });
+  ensureUserHome(uid);
+  impersonated.set(uid, Date.now());
+  const cookie = `zportal=${encodeURIComponent(sign(`${uid}|${Date.now()}`))}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${CONFIG.sessionTtl}`;
+  audit({ ts: new Date().toISOString(), kind: "impersonate", uid, username: rec.username, rule: "admin 以该租户身份登录（调试）" });
+  log(`admin impersonate: ${rec.username} (${uid})`);
+  send(res, 200, { ok: true, username: rec.username }, { "Set-Cookie": cookie });
 });
 
 // 启用 / 禁用租户账号（禁用即待激活：旧会话立即失效，运行中进程终止）
