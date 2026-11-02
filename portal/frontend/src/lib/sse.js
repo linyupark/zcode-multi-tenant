@@ -1,11 +1,12 @@
 /** SSE-over-fetch 聊天流客户端（自旧 sendMsg 的 reader 循环移植，与 DOM 解耦）。
- *  服务端事件名：cli（内含 result / model.streaming(reasoning_delta|text_delta) /
- *  session.updated / tool.*）、fallback、end。end 后主动 cancel，不等连接关闭。 */
-export async function runChatStream({ body, signal, onEvent }) {
-  const resp = await fetch("/api/chat", {
-    method: "POST",
+ *  url 默认 POST /api/chat；断线续播传 GET /api/chat/attach?runId=（opts.method 留空即可，
+ *  body 为 null）。服务端事件名：cli（内含 result / model.streaming(reasoning_delta|text_delta) /
+ *  session.updated / tool.*）、fallback、end、replay-done。end 后主动 cancel，不等连接关闭。 */
+export async function runChatStream({ url = "/api/chat", body, signal, onEvent }) {
+  const resp = await fetch(url, {
+    method: body !== undefined ? "POST" : "GET",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
   });
   if (!resp.ok) {
@@ -31,7 +32,8 @@ export async function runChatStream({ body, signal, onEvent }) {
       const evName = (lines.find((l) => l.startsWith("event: ")) || "").slice(7);
       if (!evLine) continue;
       onEvent(evName, JSON.parse(evLine.slice(6)));
-      if (evName === "end") ended = true;
+      // end = 本轮结束；replay-done(ended:true) = attach 重放发现 run 已完结
+      if (evName === "end" || (evName === "replay-done" && ev.ended)) ended = true;
     }
     if (ended) { try { await reader.cancel(); } catch { /* noop */ } break; }
   }

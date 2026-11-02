@@ -1,7 +1,7 @@
 import { api } from "../api.js";
 import { applyDocumentBranding } from "../branding.js";
 import { ui, setStatus, closeDrawer } from "./ui.svelte.js";
-import { chat, replay, clearChat } from "./chat.svelte.js";
+import { chat, runs, replay, clearChat, refreshRuns, restoreRunningRun, detachLive } from "./chat.svelte.js";
 
 /** 会话态：登录账号 / 工作区 / 当前会话 / 权限模式 / 白标 */
 export const session = $state({
@@ -17,6 +17,21 @@ export const session = $state({
   mode: "yolo",
 });
 
+// —— URL hash 会话定位：#s=<sessionId>（ws 由会话归属决定，不冗余存）——
+// 选中会话/新会话/流式中拿到新 sessionId 时都同步；刷新后 boot 据此恢复选中。
+
+function readHash() {
+  const m = (location.hash || "").match(/s=([A-Za-z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+export function syncHash() {
+  const want = session.sessionId ? `#s=${session.sessionId}` : "#new";
+  if (location.hash !== want) {
+    try { history.replaceState(null, "", want); } catch { /* 老浏览器忽略 */ }
+  }
+}
+
 /** 启动：公开品牌 → 会话探测（未登录留在 Gate） */
 export async function boot() {
   try {
@@ -29,10 +44,26 @@ export async function boot() {
     adoptMe(me);
     session.booted = true; // 先亮出工作台，侧栏数据后台补齐
     await loadWorkspaces();
+    await restoreFromHash(); // hash 带了会话 id → 恢复选中（可能带后台运行续播）
+    refreshRuns(); // 侧栏转圈用（restoreFromHash 内部已查过时幂等）
   } catch {
     session.me = null;
     session.booted = true;
   }
+}
+
+/** 刷新恢复：hash 里有会话 id 就选中它；该会话仍有后台 run 则自动续播 */
+async function restoreFromHash() {
+  const sid = readHash();
+  if (!sid || !session.sessions.some((s) => s.id === sid)) {
+    if (sid) syncHash(); // 会话已不存在（被删/换号）：清掉失效 hash
+    return;
+  }
+  session.ws = session.ws || "default";
+  session.sessionId = sid;
+  await replay(sid);
+  syncHash();
+  await restoreRunningRun(sid);
 }
 
 function adoptMe(me) {
@@ -50,6 +81,7 @@ export async function login(username, password) {
   const fresh = await api("/api/me").catch(() => null);
   if (fresh) adoptMe(fresh);
   await loadWorkspaces();
+  syncHash(); // 清掉上一个账号残留的 #s=…（sessionId 已空 → 写成 #new）
 }
 
 export async function register(username, password, displayName) {
@@ -59,6 +91,7 @@ export async function register(username, password, displayName) {
   const fresh = await api("/api/me").catch(() => null);
   if (fresh) adoptMe(fresh);
   await loadWorkspaces();
+  syncHash();
   return res;
 }
 
@@ -82,28 +115,38 @@ export async function loadWorkspaces() {
   if (active) session.sessionTitle = active.title || session.sessionTitle;
 }
 
-/** 切换工作区 / 选择会话 / 开新会话（旧 switchWs） */
+/** 切换工作区 / 选择会话 / 开新会话（旧 switchWs）。
+ *  流式运行中切走：只断开本地订阅（detachLive），后台 run 继续跑；
+ *  切回时 restoreRunningRun 会重新 attach 续播，不丢内容。 */
 export async function selectWs(ws, sessionId, opts = {}) {
+  if (session.sessionId !== sessionId || session.ws !== ws) detachLive();
   session.ws = ws;
   session.sessionId = sessionId;
   session.sessionTitle = sessionId ? (opts.title || null) : null;
   ui.atts = [];
+  syncHash();
   if (sessionId && !opts.skipReplay) {
     await replay(sessionId);
+    await restoreRunningRun(sessionId); // 该会话有后台 run（刷新前发起）→ 自动续播
   } else if (!sessionId) {
     clearChat();
   }
   loadWorkspaces().catch(() => {});
+  refreshRuns();
 }
 
-/** 删除会话（侧栏 ×） */
+/** 删除会话（侧栏 ×）。若该会话仍有后台 run，一并精准停止（只停这条）。 */
 export async function deleteSession(sid) {
   try {
     await api(`/api/sessions/${sid}?ws=${encodeURIComponent(session.ws)}`, { method: "DELETE" });
+    const run = Object.values(runs.map).find((r) => r.sessionId === sid);
+    if (run) await api("/api/chat/stop", { method: "POST", body: JSON.stringify({ runId: run.runId }) }).catch(() => {});
+    refreshRuns();
     if (session.sessionId === sid) {
       session.sessionId = null;
       session.sessionTitle = null;
       clearChat();
+      syncHash();
     }
     await loadWorkspaces();
   } catch (e) {
