@@ -3,8 +3,17 @@
   import ThinkBlock from "./ThinkBlock.svelte";
   import FileCards from "./FileCards.svelte";
   import { toolIconClass } from "../lib/tools.js";
+  import { session } from "../lib/stores/session.svelte.js";
 
   let { t } = $props();
+
+  const botName = $derived(session.branding.botName || "ZCode");
+  const tsText = $derived(t.ts ? fmtTs(t.ts) : "");
+  function fmtTs(ms) {
+    const d = new Date(ms);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
 
   // 一次只展开一个工具详情，再次点击收起（对齐旧 toggleToolDetail）
   let openTool = $state(-1);
@@ -20,12 +29,12 @@
 
 {#if t.user}
   <div class="msg-row user">
-    <div class="who">你</div>
+    <div class="who">你{#if tsText}<span class="who-ts">{tsText}</span>{/if}</div>
     <div class="bubble">{t.user}{#if t.files?.length}<div class="msg-files">{#each t.files as f}<span class="file-chip" title="随消息附件">{typeof f === "string" ? f : f.filename}</span>{/each}</div>{/if}</div>
   </div>
 {/if}
 <div class="msg-row assistant">
-  <div class="who">ZCode</div>
+  <div class="who">{botName}</div>
   <!-- 白敏感：pre-wrap 气泡内块间不能有任何换行/空格，否则渲染成空行 -->
   <div class="bubble">{#if t.think}<ThinkBlock think={t.think} done={!t.streaming || !!t.text} />{/if}{#if t.tools?.length}<div class="tool-icons">{#each t.tools as tool, i (tool.callId || i)}<button type="button" class="tool-icon" class:on={openTool === i} title="{tool.name}{tool.brief ? " · " + tool.brief : ""}" onclick={() => toggleTool(i)}><i class={toolIconClass(tool.name)}></i></button>{/each}</div>{/if}{#if openTool >= 0 && t.tools[openTool]}{@const item = t.tools[openTool]}<div class="tool-detail">{item.name}{item.brief ? " — " + item.brief : ""}{"\n\n"}{item.detail || ""}</div>{/if}{#each t.fallbacks || [] as fb}<div class="fallback-note">模型 {fb.from} 调用失败，已自动切换到 {fb.to}{fb.reason ? `（${fb.reason.slice(0, 60)}）` : ""}</div>{/each}{#each t.violations || [] as v}<div class="violation-note">安全拦截（{v.tool}）：{v.message}。本次执行已终止，可调整需求后继续。</div>{/each}{#if t.text}<MarkdownOut raw={t.text} />{/if}{#if t.outputs?.length}<FileCards files={t.outputs} />{/if}{#if showLoading}<div class="loading-dots" aria-label="正在思考"><i></i><i></i><i></i></div>{/if}{#if emptyTurn}（这轮由后台子任务完成，无直接输出）{/if}</div>
 </div>
@@ -33,6 +42,7 @@
 <style>
   .msg-row{display:flex;flex-direction:column}
   .who{font-size:11.5px;color:var(--muted);margin-bottom:3px;padding:0 4px}
+  .who-ts{margin-left:8px;font-variant-numeric:tabular-nums}
   .bubble{padding:10px 14px;white-space:pre-wrap;word-break:break-word;line-height:1.6;font-size:14px}
   /* user：右侧，自适应宽度（内容多宽气泡多宽，上限 78%） */
   .user{align-items:flex-end}

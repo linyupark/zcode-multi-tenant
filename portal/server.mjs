@@ -295,7 +295,7 @@ const runningSessions = new Map();
 // ---------- 品牌与外观（白标配置，管理员设定，租户端动态套用） ----------
 
 const brandingPath = () => path.join(DATA_DIR, "branding.json");
-const BRAND_DEFAULTS = { appName: "", logoText: "", logoUrl: "", tagline: "", accent: "", customCSS: "" };
+const BRAND_DEFAULTS = { appName: "", logoText: "", logoUrl: "", tagline: "", accent: "", customCSS: "", botName: "" };
 
 function loadBranding() {
   try { return { ...BRAND_DEFAULTS, ...JSON.parse(fs.readFileSync(brandingPath(), "utf8")) }; }
@@ -646,6 +646,22 @@ function stampAgentsMd(uid) {
 }
 function audit(entry) {
   try { fs.appendFileSync(AUDIT_LOG, JSON.stringify(entry) + "\n"); } catch { /* noop */ }
+}
+function readAudit(limit = 100, kind = null) {
+  let rows = [];
+  try {
+    rows = fs.readFileSync(AUDIT_LOG, "utf8").split("\n").filter(Boolean)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+  } catch { return { rows: [], stats: {} }; }
+  const filtered = kind ? rows.filter((r) => (r.kind || "guardrail") === kind) : rows;
+  const stats = {};
+  for (const r of filtered) {
+    if ((r.kind || "guardrail") !== "guardrail") continue;
+    const key = r.rule || "(未知)";
+    stats[key] = (stats[key] || 0) + 1;
+  }
+  return { rows: filtered.slice(-limit).reverse(), stats, total: filtered.length };
 }
 
 // bash 写入型操作与高危命令识别（启发式；Write/Edit 等结构化工具走精确路径判定）
@@ -1031,7 +1047,12 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
         }
         const reason = guardrailCheck({ tool: toolName, input: p.input ?? p.args ?? p.summary ?? "", wsPath: dir, wsRoot, homePath });
         if (reason) {
-          audit({ ts: new Date().toISOString(), uid: user.uid, ws, runId, tool: toolName, rule: reason, input: String(typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? p.args ?? "")).slice(0, 400) });
+          audit({
+            ts: new Date().toISOString(), kind: "guardrail", uid: user.uid, username: user.username, ws, runId,
+            message: String(message || "").slice(0, 500), sessionId: sessionIdSeen,
+            tool: toolName, rule: reason,
+            input: String(typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? p.args ?? "")).slice(0, 400),
+          });
           log(`guardrail: user=${user.uid.slice(0, 8)} ws=${ws} ${reason}`);
           ssePush(key, "guardrail", { message: reason, tool: toolName });
           try { child.kill(); } catch { /* noop */ }
@@ -1325,17 +1346,17 @@ function sessionMessages(uid, sessionId, beforeSeq, limit, wsAbsParam) {
 
     const msgs = nextStart === null
       ? db.prepare(
-          "SELECT id, data, sequence FROM message WHERE session_id = ? AND sequence >= ? ORDER BY sequence ASC"
+          "SELECT id, data, sequence, time_created FROM message WHERE session_id = ? AND sequence >= ? ORDER BY sequence ASC"
         ).all(sessionId, starts[0])
       : db.prepare(
-          "SELECT id, data, sequence FROM message WHERE session_id = ? AND sequence >= ? AND sequence < ? ORDER BY sequence ASC"
+          "SELECT id, data, sequence, time_created FROM message WHERE session_id = ? AND sequence >= ? AND sequence < ? ORDER BY sequence ASC"
         ).all(sessionId, starts[0], nextStart);
     const partsStmt = db.prepare("SELECT data FROM part WHERE message_id = ? ORDER BY sequence");
     const items = msgs.map((m) => {
       const meta = JSON.parse(m.data || "{}");
       const parts = partsStmt.all(m.id).map((p) => JSON.parse(p.data));
       const uiHidden = meta.semantics?.uiVisibility === "hidden" || meta.semantics?.kind === "system_reminder";
-      return { seq: m.sequence, role: meta.role || "assistant", uiHidden, parts };
+      return { seq: m.sequence, role: meta.role || "assistant", uiHidden, ts: m.time_created, parts };
     });
     // 重组为轮次：user 消息开一轮，附其后 assistant（reasoning→think / text→text / tool→tools）
     const turns = [];
@@ -1344,7 +1365,7 @@ function sessionMessages(uid, sessionId, beforeSeq, limit, wsAbsParam) {
       if (it.role === "user") {
         if (it.uiHidden) continue; // CLI 内部注入（agent 列表 / system reminder）不对租户展示
         if (cur) turns.push(cur);
-        cur = { seq: it.seq, user: "", files: [], think: "", tools: [], text: "", _writes: [] };
+        cur = { seq: it.seq, ts: it.ts, user: "", files: [], think: "", tools: [], text: "", _writes: [] };
         for (const p of it.parts) {
           if (p.type === "text" && p.text) cur.user += (cur.user ? "\n" : "") + p.text;
           else if (p.type === "file" && p.filename) cur.files.push({ filename: p.filename, mime: p.mime || "" });
@@ -1445,6 +1466,7 @@ route("POST", /^\/api\/admin\/branding$/, async (req, res) => {
   const logoText = str(data.logoText, 4) ?? b.logoText;
   const tagline = str(data.tagline, 80) ?? b.tagline;
   const customCSS = typeof data.customCSS === "string" ? data.customCSS.slice(0, 20000) : b.customCSS;
+  const botName = str(data.botName, 20) ?? b.botName;
   // accent 校验为 #rgb/#rrggbb 或空
   let accent = typeof data.accent === "string" ? data.accent.trim() : b.accent;
   if (accent && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(accent)) {
@@ -1456,8 +1478,8 @@ route("POST", /^\/api\/admin\/branding$/, async (req, res) => {
     return send(res, 400, { error: "Logo 需为 http(s) 图片地址、data:image 内联图或已上传的 /branding/ 路径" });
   }
   if (logoUrl.length > 300_000) return send(res, 413, { error: "Logo data URI 过大（上限 ~300KB），请压缩后重试" });
-  saveBranding({ appName, logoText, logoUrl, tagline, accent, customCSS });
-  log(`branding updated: appName=${appName || "(默认)"} accent=${accent || "(默认)"}`);
+  saveBranding({ appName, logoText, logoUrl, tagline, accent, customCSS, botName });
+  log(`branding updated: appName=${appName || "(默认)"} accent=${accent || "(默认)"} botName=${botName || "(默认)"}`);
   send(res, 200, { ok: true, branding: loadBranding() });
 });
 
@@ -1466,6 +1488,14 @@ route("POST", /^\/api\/admin\/branding$/, async (req, res) => {
 route("GET", /^\/api\/admin\/agents-md$/, async (req, res) => {
   if (!requireAdmin(req, res)) return;
   send(res, 200, { content: agentsMdContent(), custom: fs.existsSync(AGENTS_MD_FILE) });
+});
+
+// 行为审计：guardrail 拦截记录（含触发消息）+ 统计
+route("GET", /^\/api\/admin\/audit$/, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const q = new URL(req.url, "http://x").searchParams;
+  const limit = Math.min(Number(q.get("limit") || 100), 500);
+  send(res, 200, readAudit(limit, q.get("kind")));
 });
 
 route("POST", /^\/api\/admin\/agents-md$/, async (req, res) => {
@@ -1579,7 +1609,7 @@ route("POST", /^\/api\/admin\/set-user-active$/, async (req, res) => {
       if (key.startsWith(uid + "/")) { try { process.kill(info.pid); } catch { /* ignore */ } runningSessions.delete(key); killed++; }
     }
   }
-  audit({ ts: new Date().toISOString(), uid, rule: active ? "admin 启用账号" : "admin 禁用账号（待激活）", username: users[uid].username });
+  audit({ ts: new Date().toISOString(), kind: "account", uid, username: users[uid].username, rule: active ? "admin 启用账号" : "admin 禁用账号（待激活）" });
   log(`admin set-user-active: ${users[uid].username} → ${active ? "enabled" : "disabled"}${killed ? ` (killed ${killed} runs)` : ""}`);
   send(res, 200, { ok: true, uid, active, killed });
 });

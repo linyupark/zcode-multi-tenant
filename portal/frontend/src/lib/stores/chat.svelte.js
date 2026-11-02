@@ -76,6 +76,7 @@ export async function send(text) {
 
   const raw = {
     _id: "live-" + (++liveId),
+    ts: Date.now(),
     user: text,
     files: ui.atts.map((a) => a.filename),
     think: "",

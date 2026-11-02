@@ -115,6 +115,12 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
 #gate .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
 #gate .field{margin-bottom:12px}
 .empty{padding:28px 12px;color:var(--muted);font-size:13px;text-align:center}
+/* 行为审计条目 */
+.au-item{border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px}
+.au-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.au-msg{margin:8px 0 4px;font-size:13.5px;color:var(--text)}
+.au-rule{font-size:12.5px;color:#8f1d22}
+.au-input{margin:6px 0 0;font-size:11.5px;font-family:"IBM Plex Mono",monospace;color:var(--muted);background:var(--raised);border-radius:6px;padding:8px 10px;max-height:140px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 /* 手机 */
 @media(max-width:768px){
   h1{font-size:19px}
@@ -232,6 +238,7 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
           </div>
           <div>
             <div class="field"><label>副标题（登录页标语）</label><input id="br-tagline" placeholder="如：示例企业的专属 AI 工作区"></div>
+            <div class="field"><label>AI 助手名称（聊天里机器人显示的名字，默认 ZCode）</label><input id="br-botname" placeholder="ZCode" maxlength="20"></div>
             <div class="field"><label>主题色（accent，#RRGGBB）</label><input id="br-accent" placeholder="#1b6c80"></div>
             <div class="field"><label>自定义 CSS（预留扩展，注入租户端）</label><textarea id="br-css" rows="3" style="width:100%;padding:7px 11px;border:1px solid var(--control);border-radius:6px;font:inherit;font-family:'IBM Plex Mono',monospace;font-size:12px" placeholder=".bubble { border-radius: 2px; }"></textarea></div>
           </div>
@@ -250,6 +257,15 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
         <div class="msg err" id="am-err"></div>
         <div class="msg ok" id="am-ok"></div>
         <div class="btn-row"><button id="btn-am-save">保存行为约束</button><span class="hint mono" id="am-custom"></span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>行为审计 <span class="note" id="au-note"></span><span class="note">拦截时租户发送的消息与命中的规则，用于核查拦截是否合理</span></h2>
+      <div class="card" style="padding:20px">
+        <div id="au-stats" style="margin-bottom:12px"></div>
+        <div class="btn-row" style="margin:0 0 12px"><button class="ghost" id="btn-au-refresh">刷新记录</button><span class="hint" id="au-file"></span></div>
+        <div id="au-list"></div>
       </div>
     </section>
 
@@ -331,7 +347,7 @@ $("btn-open-portal").onclick = () => window.open("/", "_blank");
 async function enter() {
   $("gate").classList.add("hidden");
   $("shell").classList.remove("hidden");
-  await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp(), loadAgentsMd()]);
+  await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp(), loadAgentsMd(), loadAudit()]);
 }
 
 /* model */
@@ -467,6 +483,7 @@ async function loadBranding() {
   $("br-logotext").value = b.logoText || "";
   $("br-logourl").value = b.logoUrl || "";
   $("br-tagline").value = b.tagline || "";
+  $("br-botname").value = b.botName || "";
   $("br-accent").value = b.accent || "";
   $("br-css").value = b.customCSS || "";
   $("skills-dir").textContent = "data/skills/";
@@ -477,6 +494,7 @@ $("btn-br-save").onclick = async () => {
     await api("/api/admin/branding", { method: "POST", body: JSON.stringify({
       appName: $("br-name").value, logoText: $("br-logotext").value,
       logoUrl: $("br-logourl").value, tagline: $("br-tagline").value,
+      botName: $("br-botname").value,
       accent: $("br-accent").value, customCSS: $("br-css").value,
     })});
     $("br-ok").textContent = "已保存，租户端刷新即可看到";
@@ -485,7 +503,7 @@ $("btn-br-save").onclick = async () => {
 $("btn-br-reset").onclick = async () => {
   $("br-err").textContent = ""; $("br-ok").textContent = "";
   try {
-    await api("/api/admin/branding", { method: "POST", body: JSON.stringify({ appName: "", logoText: "", logoUrl: "", tagline: "", accent: "", customCSS: "" }) });
+    await api("/api/admin/branding", { method: "POST", body: JSON.stringify({ appName: "", logoText: "", logoUrl: "", tagline: "", botName: "", accent: "", customCSS: "" }) });
     loadBranding();
     $("br-ok").textContent = "已恢复默认";
   } catch (e) { $("br-err").textContent = e.message; }
@@ -507,6 +525,38 @@ $("btn-am-save").onclick = async () => {
     $("am-ok").textContent = "已保存：下一个会话开始生效";
   } catch (e) { $("am-err").textContent = e.message; }
 };
+
+/* 行为审计 */
+function escTime(ts) {
+  try { return new Date(ts).toLocaleString("zh-CN", { hour12: false }); } catch { return ts || "—"; }
+}
+async function loadAudit() {
+  try {
+    const j = await api("/api/admin/audit?limit=200");
+    const stats = Object.entries(j.stats || {});
+    $("au-note").textContent = j.total ? `${j.total} 条拦截记录` : "";
+    $("au-file").textContent = "data/audit.log";
+    $("au-stats").innerHTML = stats.length
+      ? stats.map(([rule, n]) => `<span class="pill" style="margin-right:8px">${esc(rule)} × ${n}</span>`).join("")
+      : `<span class="hint">还没有拦截记录——租户触发行为约束后会出现在这里</span>`;
+    $("au-list").innerHTML = (j.rows || []).length ? j.rows.map((r) => `
+      <div class="au-item">
+        <div class="au-head">
+          ${r.kind === "account"
+            ? `<span class="pill">账号</span>`
+            : `<span class="pill" style="background:#fdecec;color:#8f1d22">拦截</span>`}
+          <b>${esc(r.username || r.uid?.slice(0, 10) || "?")}</b>
+          <span class="hint mono">${esc(r.ws || "")}</span>
+          <span class="hint" style="margin-left:auto">${escTime(r.ts)}</span>
+        </div>
+        ${r.message ? `<div class="au-msg">「${esc(r.message)}」</div>` : ""}
+        <div class="au-rule">命中：${esc(r.rule || "—")}${r.tool ? ` · 工具 ${esc(r.tool)}` : ""}</div>
+        ${r.input ? `<pre class="au-input">${esc(r.input)}</pre>` : ""}
+      </div>`).join("")
+      : `<div class="hint">暂无记录</div>`;
+  } catch (e) { $("au-list").innerHTML = `<div class="hint">加载失败：${esc(e.message)}</div>`; }
+}
+$("btn-au-refresh").onclick = loadAudit;
 
 /* ---------- 企业全局技能 ---------- */
 async function loadSkills() {
