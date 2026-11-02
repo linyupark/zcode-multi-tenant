@@ -291,8 +291,45 @@ function ensureUserHome(uid) {
   return home;
 }
 
-/** 会话缓存：sessionId → { userId, ws, proc } （内存态；CLI 自己持久化会话内容） */
+/** 运行记录：runId → run hub 条目。CLI 子进程生命周期与 SSE 连接解耦：
+ *  - SSE 断开（刷新/关页）只解除订阅，不再 kill 子进程，AI 继续跑完；
+ *  - 事件全部进 ring 缓冲，新订阅者先整段重放再续播（断线重连/刷新恢复）；
+ *  - 跨页面共享：侧栏转圈用 running 列表；恢复会话用 attach 重连。
+ *  key = `${uid}/${ws}/${runId}`；run 内含 uid/ws 做越权过滤。 */
 const runningSessions = new Map();
+
+const RUN_RING_MAX = 4000; // 事件缓冲上限（超过后整段丢弃早期事件；单轮工具事件远达不到）
+
+function runKey(run) { return `${run.uid}/${run.ws}/${run.runId}`; }
+
+/** 订阅一个 run：返回 {replay, unsubscribe}。replay=订阅时点之前的缓冲事件（含 end 则已完结）。 */
+function runSubscribe(run, res) {
+  const sub = { res };
+  run.subs.add(sub);
+  const replay = { events: run.ring.slice(), ended: run.ended };
+  return {
+    replay,
+    unsubscribe() { run.subs.delete(sub); },
+  };
+}
+
+/** 向 run 的所有订阅者推送事件（无订阅者也照常进缓冲，attach 后可补看） */
+function runEmit(run, event, data) {
+  run.ring.push({ event, data });
+  if (run.ring.length > RUN_RING_MAX) run.ring.splice(0, run.ring.length - RUN_RING_MAX);
+  const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const sub of run.subs) {
+    try { sub.res.write(frame); } catch { /* 断开的订阅者由 req close 清理 */ }
+  }
+}
+
+/** 兜底清理：超过 2 小时的已完结 run 从内存移除（正常在 emit end 后延迟清理） */
+function sweepRuns() {
+  const now = Date.now();
+  for (const [key, run] of runningSessions) {
+    if (run.ended && now - run.endedAt > 2 * 3600_000) runningSessions.delete(key);
+  }
+}
 
 // ---------- 品牌与外观（白标配置，管理员设定，租户端动态套用） ----------
 
@@ -794,14 +831,6 @@ function guardrailCheck({ tool, input, wsPath, wsRoot, homePath }) {
 
 // ---------- SSE hub ----------
 
-const sseClients = new Map(); // key: `${uid}/${ws}/${runId}` → res
-
-function ssePush(key, event, data) {
-  const res = sseClients.get(key);
-  if (!res) return;
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
 // ---------- static ----------
 
 const MIME = {
@@ -1053,25 +1082,30 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
   const runId = crypto.randomBytes(6).toString("hex");
   // 斜杠归一化：技能调用改写为官方 /skill，其余 / 开头按普通文本（见函数注释）
   message = normalizePromptSlash(message, listSkillNames(user.uid, ws || "default"));
-  const key = `${user.uid}/${ws}/${runId}`;
 
-  // SSE 响应
+  // run hub 条目：CLI 子进程与 SSE 连接解耦（见 runningSessions 注释）
+  const run = {
+    runId, uid: user.uid, ws: ws || "default",
+    subs: new Set(), ring: [], ended: false, endedAt: 0,
+    start: Date.now(), pid: null, sessionId: sessionId || null, message: String(message).slice(0, 500),
+    stopped: false, // 显式停止（停止按钮/管理员禁用）：终止后不再走模型回退链
+  };
+  runningSessions.set(runKey(run), run);
+  let sessionIdSeen = sessionId || null;
+
+  // SSE 响应（本请求只是首个订阅者；断开后 run 继续由 hub 驱动）
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
-  sseClients.set(key, res);
+  const { unsubscribe } = runSubscribe(run, res);
+  req.on("close", unsubscribe); // 只解除订阅，绝不 kill 子进程
 
-  let aborted = false;
-  let activeChild = null;
-  let sessionIdSeen = null;
   const homePath = ensureUserHome(user.uid);
   const wsRoot = path.dirname(dir); // 本租户全部工作区的根（读取放行范围）
   const writtenFiles = new Set(); // 本轮 run 中 Write/Edit 类工具写过的绝对路径
-  const cleanup = () => { sseClients.delete(key); runningSessions.delete(key); };
-  req.on("close", () => { aborted = true; try { activeChild?.kill(); } catch { /* noop */ } cleanup(); });
 
   // 模型候选链：请求指定（如有）> 管理员默认；再按顺序追加 fallbacks
   const adminCfg = loadAdminModelConfig() || {};
@@ -1081,8 +1115,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
 
   const runOnce = (modelName) => new Promise((resolve) => {
     const child = dispatchPrompt({ uid: user.uid, ws, message, sessionId, mode, model: modelName || undefined, attachments: safeAtts });
-    activeChild = child;
-    runningSessions.set(key, { pid: child.pid, started: Date.now() });
+    run.pid = child.pid;
     let buf = "", sawResult = false, sawText = false, sawTool = false, sawError = null;
     let rawBlock = null; // CLI 早退响应（/help 纯文本、Unknown command 多行 JSON）逐行解析失败时在这里攒块
     const onLine = (line) => {
@@ -1092,10 +1125,10 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
       catch {
         rawBlock = rawBlock || [];
         rawBlock.push(line);
-        ssePush(key, "raw", { line });
+        runEmit(run, "raw", { line });
         return;
       }
-      if (ev.session_id || ev.sessionId) sessionIdSeen = ev.session_id || ev.sessionId;
+      if (ev.session_id || ev.sessionId) { sessionIdSeen = ev.session_id || ev.sessionId; run.sessionId = sessionIdSeen; }
       if (ev.type === "result") sawResult = true;
       const p = ev.payload || {};
       if (ev.type === "model.streaming" && p.kind === "text_delta" && p.delta) sawText = true;
@@ -1118,12 +1151,12 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
             input: String(typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? p.args ?? "")).slice(0, 400),
           });
           log(`guardrail: user=${user.uid.slice(0, 8)} ws=${ws} ${reason}`);
-          ssePush(key, "guardrail", { message: reason, tool: toolName });
+          runEmit(run, "guardrail", { message: reason, tool: toolName });
           try { child.kill(); } catch { /* noop */ }
         }
       }
       if (ev.type === "session.updated" && p.resultType === "error") sawError = p.error || "模型调用错误";
-      ssePush(key, "cli", ev);
+      runEmit(run, "cli", ev);
     };
     child.stdout.on("data", (chunk) => {
       buf += chunk.toString("utf8");
@@ -1132,7 +1165,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
     });
     child.stderr.on("data", (c) => {
       const line = c.toString("utf8").trimEnd();
-      ssePush(key, "stderr", { line });
+      runEmit(run, "stderr", { line });
       // 「ZCode Built-in …」是内核内置端点租约刷新的生命周期日志（unchanged/skipped 等），
       // 每次启动都打在 stderr 第一行；别让它顶掉后面真正的错误原因
       if (!sawError && line && !/^ZCode Built-in /i.test(line)) sawError = line.slice(0, 300);
@@ -1157,7 +1190,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
           if (sid) sessionIdSeen = sessionIdSeen || sid;
           sawText = true;
           sawError = null; // 早退响应即最终答复，stderr 的生命周期日志不当错误
-          ssePush(key, "cli", { type: "session.updated", sessionId: sid, payload: { content: text.slice(0, 4000) } });
+          runEmit(run, "cli", { type: "session.updated", sessionId: sid, payload: { content: text.slice(0, 4000) } });
         }
       }
       const produced = sawText || sawTool;
@@ -1165,15 +1198,15 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
     });
   });
 
-  ssePush(key, "start", { runId, models: chain.length ? chain : ["(管理员未配置模型，使用 CLI 默认)"] });
+  runEmit(run, "start", { runId, models: chain.length ? chain : ["(管理员未配置模型，使用 CLI 默认)"] });
 
   let lastRes = { ok: false, code: 1 };
   let fallbackCount = 0;
   const attempts = chain.length ? chain : [undefined];
   for (let i = 0; i < attempts.length; i++) {
-    if (aborted) break;
+    if (run.stopped) break;
     if (i > 0) {
-      ssePush(key, "fallback", { from: attempts[i - 1], to: attempts[i], index: i, reason: (lastRes.error || "").slice(0, 200) });
+      runEmit(run, "fallback", { from: attempts[i - 1], to: attempts[i], index: i, reason: (lastRes.error || "").slice(0, 200) });
       log(`model fallback: ${attempts[i - 1]} → ${attempts[i]} (user=${user.uid.slice(0, 8)}, reason=${(lastRes.error || "").slice(0, 80)})`);
       fallbackCount++;
     }
@@ -1184,20 +1217,63 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
   }
 
   recordSession(user.uid, ws || "default", sessionIdSeen);
-  // 本轮 AI 产出文件（写工作区内的、且真实存在的），end 事件下发给前端渲染卡片
+  // 本轮 AI 产出文件（写工作区内、真实存在、且是交付型文件），end 事件下发给前端渲染卡片；
+  // 过程中的临时脚本（analyze.js 等）与缓存目录产物不进卡片（见 isDeliverable）
   const imageRe = /\.(png|jpe?g|gif|webp|svg)$/i;
   const outFiles = [...writtenFiles].map((abs) => {
     if (!abs.startsWith(dir + path.sep)) return null;
     const rel = path.relative(dir, abs).split(path.sep).join("/");
+    if (!isDeliverable(rel)) return null;
     let exists = false, size = null;
     try { const st = fs.statSync(abs); if (st.isFile()) { exists = true; size = st.size; } } catch { /* 未落盘或已删 */ }
     return { path: rel, filename: path.basename(abs), size, exists, image: imageRe.test(rel) };
   }).filter(Boolean);
-  ssePush(key, "end", { code: lastRes.ok ? 0 : (lastRes.code ?? 1), sessionId: sessionIdSeen, fallbackCount, error: lastRes.ok ? null : (lastRes.error || null), files: outFiles });
-  cleanup();
-  // 必须显式结束 SSE 响应：否则浏览器 reader.read() 永远等不到 done，
-  // 前端 sendMsg 的 finally 不执行，发送按钮会一直停在「停止」。
+  run.ended = true;
+  run.endedAt = Date.now();
+  runEmit(run, "end", { code: lastRes.ok ? 0 : (lastRes.code ?? 1), sessionId: sessionIdSeen, fallbackCount, error: lastRes.ok ? null : (lastRes.error || null), files: outFiles });
+  // 首订阅者的响应流到此结束（订阅者断开不影响 run；run 缓冲留 2h 供 attach 重放，sweepRuns 兜底回收）
   try { res.end(); } catch { /* 客户端可能已断开 */ }
+}, { auth: true });
+
+// --- 断线续播：重连一个后台仍在运行的 run（刷新页面后恢复流式状态） ---
+
+route("GET", /^\/api\/chat\/attach$/, async (req, res, m, user) => {
+  const q = new URL(req.url, "http://x").searchParams;
+  const runId = q.get("runId") || "";
+  let run = null;
+  for (const r of runningSessions.values()) {
+    if (r.runId === runId && r.uid === user.uid) { run = r; break; }
+  }
+  if (!run) return send(res, 404, { error: "运行不存在或已结束" });
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const { replay, unsubscribe } = runSubscribe(run, res);
+  req.on("close", unsubscribe);
+  // 先整段重放缓冲事件（订阅时点之前的历史），再由 hub 续播增量；已完结则附 end 收尾
+  for (const { event, data } of replay.events) {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  }
+  if (replay.ended) {
+    res.write(`event: replay-done\ndata: {"ended":true}\n\n`);
+    try { res.end(); } catch { /* noop */ }
+  } else {
+    res.write(`event: replay-done\ndata: {"ended":false}\n\n`);
+  }
+}, { auth: true });
+
+// --- 运行中列表：侧栏转圈 + 恢复会话时判断是否有后台 run 可 attach ---
+
+route("GET", /^\/api\/chat\/running$/, async (req, res, m, user) => {
+  const list = [];
+  for (const r of runningSessions.values()) {
+    if (r.uid !== user.uid || r.ended) continue;
+    list.push({ runId: r.runId, ws: r.ws, sessionId: r.sessionId, started: r.start, message: r.message });
+  }
+  send(res, 200, { runs: list });
 }, { auth: true });
 
 // --- 工作区文件：目录树 / 预览 / 下载（租户把 AI 产出物保存到本地） ---
@@ -1293,6 +1369,21 @@ route("DELETE", /^\/api\/files$/, async (req, res, m, user) => {
   log(`file deleted: user=${user.uid.slice(0, 8)} ws=${ws} ${rel.slice(0, 100)}`);
   send(res, 200, { ok: true });
 }, { auth: true });
+
+// --- AI 产出文件卡片：交付物过滤（实时 end 事件与回放重建共用） ---
+
+const DELIVERABLE_SKIP_EXT = new Set([
+  ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".py", ".pyc", ".sh", ".bat", ".cmd", ".ps1",
+  ".json", ".log", ".lock", ".tmp", ".part",
+]);
+const DELIVERABLE_SKIP_DIR = /(^|[\\/])(\.tmp|\.cache|\.git|node_modules|__pycache__|pip|\.venv|venv)([\\/]|$)/i;
+/** 只展示「交付型」文件：过程中的临时脚本（AI 常用 node 脚本生成 xlsx 等）与缓存不进卡片 */
+function isDeliverable(rel) {
+  const ext = path.extname(rel).toLowerCase();
+  if (DELIVERABLE_SKIP_EXT.has(ext)) return false;
+  if (DELIVERABLE_SKIP_DIR.test(rel)) return false;
+  return true;
+}
 
 // --- chat 附件上传（对齐 zcode --attach 契约：存到工作区，派发时带 --attach 绝对路径） ---
 
@@ -1486,6 +1577,7 @@ function sessionMessages(uid, sessionId, beforeSeq, limit, wsAbsParam) {
         seen.add(abs);
         if (!abs.startsWith(wsAbs + path.sep)) return null; // 只展示当前工作区内的产出
         const rel = path.relative(wsAbs, abs).split(path.sep).join("/");
+        if (!isDeliverable(rel)) return null; // 过程脚本/缓存不进卡片
         let exists = false, size = null;
         try { const st = fs.statSync(abs); if (st.isFile()) { exists = true; size = st.size; } } catch { /* 已删除 */ }
         return { path: rel, filename: path.basename(abs), size, exists, image: imageRe.test(rel) };
@@ -1503,14 +1595,14 @@ route("GET", /^\/api\/sessions\/(sess_[a-zA-Z0-9-]+)\/messages$/, async (req, re
   send(res, 200, sessionMessages(user.uid, m[1], before, limit, wsDir(user.uid, q.get("ws") || "default")));
 }, { auth: true });
 
-// 显式中断运行中的会话进程（页面刷新/close 也会 kill，这里给 UI 一个停止按钮）
+// 显式中断运行中的会话进程（刷新/关页不再杀进程，停止只能通过这里或管理员操作）
 route("POST", /^\/api\/chat\/stop$/, async (req, res, m, user) => {
   const { runId } = await readJson(req);
   let killed = 0;
-  for (const [key, info] of runningSessions) {
-    if (key.startsWith(user.uid + "/") && (!runId || key.endsWith("/" + runId))) {
-      try { process.kill(info.pid); killed++; } catch { /* already gone */ }
-      runningSessions.delete(key);
+  for (const [key, run] of runningSessions) {
+    if (run.uid === user.uid && !run.ended && (!runId || run.runId === runId)) {
+      run.stopped = true;
+      if (run.pid) { try { process.kill(run.pid); killed++; } catch { /* already gone */ } }
     }
   }
   send(res, 200, { ok: true, killed });
@@ -1711,8 +1803,8 @@ route("POST", /^\/api\/admin\/set-user-active$/, async (req, res) => {
   saveUsers(users);
   let killed = 0;
   if (!active) {
-    for (const [key, info] of runningSessions) {
-      if (key.startsWith(uid + "/")) { try { process.kill(info.pid); } catch { /* ignore */ } runningSessions.delete(key); killed++; }
+    for (const run of runningSessions.values()) {
+      if (run.uid === uid && !run.ended) { run.stopped = true; if (run.pid) { try { process.kill(run.pid); } catch { /* ignore */ } killed++; } }
     }
   }
   audit({ ts: new Date().toISOString(), kind: "account", uid, username: users[uid].username, rule: active ? "admin 启用账号" : "admin 禁用账号（待激活）" });
@@ -1901,8 +1993,8 @@ route("POST", /^\/api\/admin\/delete-user$/, async (req, res) => {
   if (!users[uid]) return send(res, 404, { error: "租户不存在" });
   const username = users[uid].username;
   // 1) 停止该租户所有运行中的会话进程
-  for (const [key, info] of runningSessions) {
-    if (key.startsWith(uid + "/")) { try { process.kill(info.pid); } catch { /* ignore */ } runningSessions.delete(key); }
+  for (const run of runningSessions.values()) {
+    if (run.uid === uid && !run.ended) { run.stopped = true; if (run.pid) { try { process.kill(run.pid); } catch { /* ignore */ } } }
   }
   // 2) 删除账号
   delete users[uid];
@@ -1957,3 +2049,6 @@ server.listen(CONFIG.port, CONFIG.host, () => {
   log(`kernel: ${CONFIG.kernelCli}`);
   log(`admin: ${CONFIG.adminPassword ? CONFIG.adminBootstrap : "(disabled)"}`);
 });
+
+// 已完结 run 的兜底回收（正常由 emit end 后保留 2h 供 attach 重放；sweepRuns 按时间清）
+setInterval(sweepRuns, 30 * 60_000).unref();
