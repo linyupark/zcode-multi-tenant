@@ -804,7 +804,18 @@ function ssePush(key, event, data) {
 
 // ---------- static ----------
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2", ".woff": "font/woff" };
+const MIME = {
+  ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json",
+  ".woff2": "font/woff2", ".woff": "font/woff",
+  ".pdf": "application/pdf", ".csv": "text/csv", ".txt": "text/plain", ".md": "text/markdown", ".xml": "application/xml", ".yml": "application/x-yaml", ".yaml": "application/x-yaml",
+  ".doc": "application/msword", ".xls": "application/vnd.ms-excel", ".ppt": "application/vnd.ms-powerpoint",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docm": "application/vnd.ms-word.document.macroEnabled.12",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".rtf": "application/rtf", ".ods": "application/vnd.oasis.opendocument.spreadsheet", ".odt": "application/vnd.oasis.opendocument.text", ".odp": "application/vnd.oasis.opendocument.presentation",
+  ".zip": "application/zip", ".gz": "application/gzip", ".tar": "application/x-tar",
+  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".mp4": "video/mp4", ".webp": "image/webp", ".gif": "image/gif",
+};
 function serveStatic(res, rel) {
   const file = path.normalize(path.join(STATIC_DIR, rel));
   if (!file.startsWith(STATIC_DIR)) return send(res, 403, { error: "forbidden" });
@@ -1191,7 +1202,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
 
 // --- 工作区文件：目录树 / 预览 / 下载（租户把 AI 产出物保存到本地） ---
 
-const DOWNLOADABLE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".txt", ".md", ".json", ".html", ".css", ".js", ".ts", ".py", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".wav", ".log", ".xml", ".yml", ".yaml"]);
+const DOWNLOADABLE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt", ".docm", ".xlsm", ".xlt", ".xla", ".pps", ".rtf", ".ods", ".odt", ".odp", ".csv", ".txt", ".md", ".json", ".html", ".css", ".js", ".ts", ".py", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".wav", ".log", ".xml", ".yml", ".yaml"]);
 const IMAGE_MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml" };
 
 /** 安全校验：rel 必须落在该用户该工作区内，且不逃逸 */
@@ -1267,11 +1278,34 @@ route("GET", /^\/api\/files\/download$/, async (req, res, m, user) => {
   fs.createReadStream(target).pipe(res);
 }, { auth: true });
 
+// 删除工作区文件（不删目录；path 安全校验同下载）
+route("DELETE", /^\/api\/files$/, async (req, res, m, user) => {
+  const q = new URL(req.url, "http://x").searchParams;
+  const ws = q.get("ws") || "default";
+  const rel = q.get("path") || "";
+  const target = safeWsPath(user.uid, ws, rel);
+  if (!target) return send(res, 400, { error: "路径非法" });
+  let st = null;
+  try { st = fs.statSync(target); } catch { return send(res, 404, { error: "文件不存在" }); }
+  if (!st.isFile()) return send(res, 400, { error: "只能删除文件，不能删除目录" });
+  fs.unlinkSync(target);
+  audit({ ts: new Date().toISOString(), kind: "file-delete", uid: user.uid, username: user.username, ws, rule: `删除工作区文件 ${rel.slice(0, 120)}` });
+  log(`file deleted: user=${user.uid.slice(0, 8)} ws=${ws} ${rel.slice(0, 100)}`);
+  send(res, 200, { ok: true });
+}, { auth: true });
+
 // --- chat 附件上传（对齐 zcode --attach 契约：存到工作区，派发时带 --attach 绝对路径） ---
 
 const UPLOAD_DIR = "uploads"; // 工作区内的固定子目录
 const UPLOAD_MAX = 20 * 1024 * 1024; // 20MB/文件
-const UPLOAD_ALLOWED = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".txt", ".md", ".csv", ".json", ".docx", ".xlsx", ".pptx", ".zip", ".svg", ".html", ".xml", ".yml", ".yaml", ".log", ".mp3", ".mp4", ".wav"]);
+const UPLOAD_ALLOWED = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".txt", ".md", ".csv", ".json",
+  // 新版 Office
+  ".docx", ".xlsx", ".pptx",
+  // 旧版 Office（97-2003）及常见变体：内核的 office 插件（LibreOffice 转换）可直接处理
+  ".doc", ".xls", ".ppt", ".docm", ".xlsm", ".xlt", ".xla", ".pps", ".rtf", ".ods", ".odt", ".odp",
+  ".zip", ".svg", ".html", ".xml", ".yml", ".yaml", ".log", ".mp3", ".mp4", ".wav",
+]);
 
 route("POST", /^\/api\/upload$/, async (req, res, m, user) => {
   const q = new URL(req.url, "http://x").searchParams;

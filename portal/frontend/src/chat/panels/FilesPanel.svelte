@@ -55,6 +55,18 @@
     a.remove();
   }
 
+  async function removeFile(rel, e) {
+    e.stopPropagation();
+    if (!confirm(`删除文件 ${rel}？（不可恢复）`)) return;
+    try {
+      await api(`/api/files?ws=${encodeURIComponent(session.ws)}&path=${encodeURIComponent(rel)}`, { method: "DELETE" });
+      if (preview?.rel === rel) { preview = null; previewData = null; }
+      await loadTree();
+    } catch (err) {
+      alert("删除失败: " + err.message);
+    }
+  }
+
   onMount(async () => {
     await loadTree();
     // 从消息产出卡片点进来：直接预览指定文件
@@ -112,6 +124,10 @@
               onclick={(e) => { e.stopPropagation(); toggleAtt(n.rel, n.name); }}>
               <i class="i-lucide-paperclip"></i>
             </button>
+            <button class="att-btn del" title="删除文件" aria-label="删除文件"
+              onclick={(e) => removeFile(n.rel, e)}>
+              <i class="i-lucide-trash-2"></i>
+            </button>
           </div>
         {/if}
       {/each}
@@ -129,6 +145,7 @@
           {hasAtt(preview.rel) ? "已引入对话" : "引入对话"}
         </button>
         <button class="ghost" onclick={download}>下载到本地</button>
+        <button class="ghost" style="color:var(--negative);border-color:var(--negative)" onclick={(e) => removeFile(preview.rel, e)}>删除</button>
         <button class="ghost" onclick={() => (preview = null)}>收起</button>
       </span>
     </div>
@@ -176,6 +193,7 @@
   }
   .att-btn:hover{background:var(--active);color:var(--accent)}
   .att-btn.on{color:var(--accent);background:var(--raised)}
+  .att-btn.del:hover{background:#fdecec;color:var(--negative)}
   .empty-tree{color:var(--muted);padding:24px;text-align:center}
   .file-preview{margin-top:14px;border-top:1px solid var(--border);padding-top:14px}
   .fp-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px}
