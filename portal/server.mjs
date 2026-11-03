@@ -288,6 +288,7 @@ function ensureUserHome(uid) {
   applyAdminModelToUser(uid, loadAdminModelConfig(), true);
   applyAdminMcpToUser(uid);
   injectGlobalSkills(uid);
+  stampHooksConfig(uid); // PreToolUse 守卫钩子（幂等盖章）
   return home;
 }
 
@@ -612,7 +613,7 @@ function adminCookieHeader(maxAge = CONFIG.sessionTtl) {
 
 // ---------- CLI bridge ----------
 
-function cliEnv(uid) {
+function cliEnv(uid, wsPath) {
   const home = ensureUserHome(uid);
   const env = { ...process.env };
   if (os.platform() === "win32") { env.USERPROFILE = home; env.HOME = home; }
@@ -627,6 +628,7 @@ function cliEnv(uid) {
   if (fs.existsSync(personalProviderFile)) env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = personalProviderFile;
   else delete env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE;
   env.ZCODE_PORTAL_HOME = home; // 供 hooks / 技能识别 portal 环境
+  if (wsPath) env.ZCODE_PORTAL_WS = wsPath; // 守卫钩子的租户上下文（工作区绝对路径）
   return env;
 }
 
@@ -650,13 +652,41 @@ function dispatchPrompt({ uid, ws, message, sessionId, mode, model, attachments 
     if (abs.startsWith(wsPath + path.sep) && fs.existsSync(abs)) args.push("--attach", abs);
   }
   if (sessionId) args.push("--resume", sessionId);
-  const env = cliEnv(uid);
+  const env = cliEnv(uid, wsPath);
   if (model) env.ZCODE_MODEL = model; // 官方契约：per-run 模型覆盖
   const child = spawn(process.execPath, args, { env, cwd: wsPath });
   return child;
 }
 
-// ---------- guardrail（租户行为约束：AGENTS.md 提示层 + 工具事件拦截层）----------
+// ---------- guardrail（租户行为约束：AGENTS.md 提示层 + PreToolUse 钩子拦截层）----------
+//
+// 拦截层 2026-11-03 起从「portal 流里正则判定 + child.kill」迁移为内核 PreToolUse 钩子
+// （portal/guardrail-hook.mjs）：内核每次工具调用前 spawn 钩子进程，deny 时该调用不
+// 执行、拒绝原因作为工具结果回喂模型自愈换合规写法，run 不再终止。判定逻辑原样迁移进
+// 钩子脚本（含两轮误杀修复：探测命令放行、黑洞设备豁免），本文件只保留三件事：
+//   1. stampHooksConfig —— 把钩子声明注入租户 config.json（ensureUserHome 幂等盖章）；
+//   2. 派发 env —— ZCODE_PORTAL_WS / ZCODE_PORTAL_HOME 传租户上下文给钩子进程；
+//   3. 流观测 —— 识别钩子运行回执（session.updated 的 descriptor 事件），blocked 时
+//      写审计 + 发 guardrail SSE 事件（前端红条），并兼作「钩子静默失效」的哨兵。
+
+const GUARDRAIL_HOOK = path.join(ROOT, "portal", "guardrail-hook.mjs");
+
+/** 把 PreToolUse 守卫钩子注入租户 config.json（幂等；内核 schema：hooks.events.PreToolUse[].hooks[]） */
+function stampHooksConfig(uid) {
+  if (!fs.existsSync(GUARDRAIL_HOOK)) return; // 脚本缺失时放弃注入，别让内核每次工具调用报钩子错误
+  const cfgPath = path.join(userHome(uid), ".zcode", "cli", "config.json");
+  try {
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    const want = {
+      enabled: true,
+      events: { PreToolUse: [{ hooks: [{ type: "process", command: process.execPath, args: [GUARDRAIL_HOOK.split(path.sep).join("/")] }] }] },
+    };
+    if (JSON.stringify(cfg.hooks) !== JSON.stringify(want)) {
+      cfg.hooks = want;
+      fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    }
+  } catch { /* config 异常不阻断派发 */ }
+}
 
 const AGENTS_MD_FILE = path.join(DATA_DIR, "agents-md.md");
 const AUDIT_LOG = path.join(DATA_DIR, "audit.log");
@@ -672,9 +702,9 @@ const DEFAULT_AGENTS_MD = `# 租户运行环境约束（门户自动下发，每
    - 临时脚本与中间产物一律放在当前工作区的 .tmp/ 目录下（可随时删除），
      不要写到系统临时目录或其他位置。
 2. 运行环境：宿主机是 Windows，Bash 工具的命令在 Git Bash（MSYS2）里执行——
-   `>/dev/null`、`2>/dev/null` 这类丢弃输出的写法可用且不算落盘，可放心使用；
-   仅当显式调用 cmd 或 PowerShell 时才改用对应写法（cmd: `> NUL`；PowerShell:
-   `> $null`）。不要向 /tmp、/usr 等 POSIX 系统路径写文件，临时文件用 .tmp/。
+   >/dev/null、2>/dev/null 这类丢弃输出的写法可用且不算落盘，可放心使用；
+   仅当显式调用 cmd 或 PowerShell 时才改用对应写法（cmd: > NUL；PowerShell:
+   > $null）。不要向 /tmp、/usr 等 POSIX 系统路径写文件，临时文件用 .tmp/。
 3. 环境探测与依赖检查（python -V、command -v、ls 查看安装目录等）属于只读
    操作，可以正常执行；但探测结果只用于选择在本工作区内的处理方式，
    不得作为向工作区外写入的理由。
@@ -719,120 +749,6 @@ function readAudit(limit = 100, kind = "guardrail") {
   return { rows: filtered.slice(-limit).reverse(), stats, total: filtered.length };
 }
 
-// bash 写入型操作与高危命令识别（启发式；Write/Edit 等结构化工具走精确路径判定）
-// 注意：<<（heredoc 只是喂 stdin，本身不落盘）与 2>&1（fd 复制）不算写入，否则技能脚本
-// 「cd 进技能目录 && node xxx.mjs 2>&1」这类正常用法会被误杀。
-// 写入判定只认「写命令 + 显式重定向目标」：探测命令里的 2>/dev/null、tr ' ' '\n' 的 '\n'
-// 不是写入目标（曾把「检查 pandas 是否安装」的探测命令误判成工作区外写入）。
-const BASH_WRITE_RE = /\b(tee|cp|mv|rm|rmdir|dd|touch|mkdir|truncate|shred|del|rd|erase|Remove-Item|Copy-Item|Move-Item|New-Item|Set-Content|Add-Content|Out-File|Clear-Content)\b/i;
-const REDIRECT_RE = /(?:^|[\s;(&|])(\d?>+|\d?<&\d?|<<-?)\s*("[^"]*"|'[^']*'|[^\s;|&)]+)/g;
-const DESTRUCTIVE_RE = /\b(git\s+push\s+(?:--force\b|-f\b)|git\s+reset\s+--hard|mkfs|shutdown\b|reboot\b|format\s+[a-zA-Z]:|reg\s+delete|vssadmin|bcdedit)\b/i;
-const WRITE_TOOLS_RE = /^(write|edit|multiedit|notebookedit|create|replace)$/i;
-// 黑洞设备：重定向到这里 = 丢弃输出，不是真实写入
-const BLACKHOLE_RE = /^(?:[a-zA-Z]:)?[\\/]?(?:dev[\\/])?(?:null|stdout|stderr|zero|nul)[\\/]?$/i;
-
-/** 提取命令里的显式重定向目标（> >> 2> 2>> &> 及 heredoc 均不算落盘，仅 > >> 2> 算） */
-function redirectTargets(cmd) {
-  const out = [];
-  for (const m of cmd.matchAll(/(?:^|[\s;(&|])(\d?>>?)\s*("[^"]*"|'[^']*'|[^\s;|&)]+)/g)) {
-    if (m[1] === "<" || m[1].startsWith("<")) continue; // stdin 不落盘
-    out.push(m[2]);
-  }
-  return out;
-}
-
-function pathTokens(cmd) {
-  const out = new Set();
-  // 带左边界（行首/分隔符之后才算路径起点）：否则 scripts/openserp.mjs 会被从中间
-  // 切出 /openserp.mjs，Windows 下被误判为盘符根的绝对路径造成误杀
-  for (const m of cmd.matchAll(/(?:^|[\s"'`|;&<>()\[,]((?:[A-Za-z]:)?(?:[\\/][^\s"'`|;&<>()]+)+))/g)) {
-    if (m[1] && m[1].trim()) out.add(m[1]);
-  }
-  for (const m of cmd.matchAll(/(?:^|[\s=("';&|])(\.\.(?:[\\/][^\s"'`|;&<>()]*)?)/g)) { if (m[1]) out.add(m[1]); }
-  return [...out];
-}
-
-/**
- * 工具事件守卫检查。返回违规原因字符串（命中即 kill 当前 run）或 null。
- * - Write/Edit 等写工具：目标必须落在本租户范围内（当前工作区 / 自己的用户主目录，
- *   主目录里有 .zcode/skills 用户级技能，技能脚本常需定位到其目录内运行并写缓存/结果）
- * - Read/Glob 等读工具：宿主代码目录、data/ 其他租户数据、.env 为禁区（自身范围例外）
- * - bash：启发式——写入操作的所有路径参数必须在本租户范围内；cd 出该范围后写入直接拦截
- * 已知局限：bash 变量间接引用、base64 混淆等无法穷举，由 AGENTS.md 提示层与审计兜底。
- */
-function guardrailCheck({ tool, input, wsPath, wsRoot, homePath }) {
-  let obj = null;
-  if (input && typeof input === "object") obj = input;
-  else if (typeof input === "string" && input.trim().startsWith("{")) { try { obj = JSON.parse(input); } catch { /* 纯文本摘要 */ } }
-  const insideWs = (abs) => abs === wsPath || abs.startsWith(wsPath + path.sep);
-  const insideOwn = (abs) => insideWs(abs) || abs === wsRoot || abs.startsWith(wsRoot + path.sep) ||
-    abs === homePath || abs.startsWith(homePath + path.sep);
-  // 受保护读取：宿主程序目录 / 数据目录 / 内核目录里，自己工作区与 HOME 之外的一切
-  const protectRead = (abs) => !insideOwn(abs) &&
-    ((abs === ROOT || abs.startsWith(ROOT + path.sep)) ||
-     (abs === DATA_DIR || abs.startsWith(DATA_DIR + path.sep)) ||
-     (abs === KERNEL_DIR || abs.startsWith(KERNEL_DIR + path.sep)) ||
-     /(^|[\\/])\.env([\\/]|$)/i.test(abs));
-  const resolveOne = (t) => path.isAbsolute(t) ? path.normalize(t) : path.resolve(wsPath, t);
-
-  // 1) 结构化路径参数（Write/Edit/Read/Glob/Grep/NotebookEdit 均可能带 file_path/path）
-  const filePath = obj?.file_path || obj?.filePath || obj?.path || obj?.notebook_path;
-  if (typeof filePath === "string" && filePath.trim()) {
-    const abs = resolveOne(filePath);
-    if (WRITE_TOOLS_RE.test(String(tool || ""))) {
-      if (!insideOwn(abs)) return `试图在工作区外写入文件：${filePath.slice(0, 120)}`;
-    } else if (protectRead(abs)) {
-      return `试图访问工作区外受保护路径：${filePath.slice(0, 120)}`;
-    }
-  }
-  // 2) bash/shell 命令
-  const command = typeof obj?.command === "string" ? obj.command : null;
-  if (command && command.trim()) {
-    if (DESTRUCTIVE_RE.test(command)) return "试图执行高危破坏性命令";
-    // 写入判定按「最终落点」：
-    //   a) 写命令（tee/cp/mv/...）——参数是写入/移动目标，必须在本租户范围内
-    //   b) 显式重定向 > >> 2> ——目标必须在本租户范围内或黑洞设备（/dev/null、NUL）
-    // 纯探测命令（ls/command -v/grep… 2>/dev/null）没有写命令也没有落盘重定向，直接放行
-    const writeCmd = BASH_WRITE_RE.test(command);
-    const redirects = redirectTargets(command).filter((t) => !BLACKHOLE_RE.test(t.replace(/^["']|["']$/g, "").replace(/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/g, "x")));
-    const hasWrite = writeCmd || redirects.length > 0;
-    for (const t of pathTokens(command)) {
-      const abs = resolveOne(t);
-      if (!hasWrite && protectRead(abs)) return `试图访问工作区外受保护路径：${t.slice(0, 120)}`;
-    }
-    if (hasWrite) {
-      for (const t of redirectTargets(command)) {
-        const bare = t.replace(/^["']|["']$/g, "");
-        if (BLACKHOLE_RE.test(bare)) continue; // /dev/null、NUL：丢弃输出，不是落盘
-        const abs = resolveOne(bare);
-        if (!insideOwn(abs)) return `试图重定向写入到本租户范围外：${bare.slice(0, 120)}`;
-      }
-      // 写命令（cp/mv/tee/rm...）的目标参数：绝对路径或 ../ 的必须在本租户范围内；
-      // 相对路径不做逐 token 判定（cd 检查兜底），探测式列举（ls /c/Python* 不含写命令）本来就不会进来
-      if (writeCmd) {
-        for (const t of pathTokens(command)) {
-          if (BLACKHOLE_RE.test(t.replace(/^["']|["']$/g, ""))) continue; // rm/cp 带 2>/dev/null 尾巴：黑洞是丢弃不是落盘（文档任务曾因此被误杀）
-          if (!t.includes("/") && !t.includes("\\")) continue; // 无路径分隔符：文件名，随 cd 落点判定
-          if (/[*?]/.test(t)) continue; // glob：探测式列举（曾把 ls /c/Python* 误判成写目标）
-          if (/^(?:[a-zA-Z]:)?[\\/]/.test(t) || t.startsWith("..")) {
-            const abs = resolveOne(t);
-            if (!insideOwn(abs)) return `试图写入本租户范围外：${t.slice(0, 120)}`;
-          }
-        }
-        // cd 出本租户范围后执行写命令：相对路径解析不可信，直接拦截
-        const cd = command.match(/\bcd\b(?:\s+\/[dD])?\s*"?([^"\n|;&]*)"?(?=\s*(?:&&|;|$|\n))/);
-        if (cd) {
-          const target = (cd[1] || "").trim();
-          const abs = target ? resolveOne(target) : wsPath;
-          if (!insideOwn(abs)) return "试图切换到本租户目录外后执行写入";
-        }
-      }
-    }
-    // 非路径型高危：写注册表、计划任务持久化等常见手段
-    if (/\b(schtasks|at\s+\d|taskkill\s+\/f|wmic\s+process\s+call)\b/i.test(command)) return "试图执行高危系统命令";
-  }
-  return null;
-}
 
 // ---------- SSE hub ----------
 
@@ -1111,6 +1027,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
   const homePath = ensureUserHome(user.uid);
   const wsRoot = path.dirname(dir); // 本租户全部工作区的根（读取放行范围）
   const writtenFiles = new Set(); // 本轮 run 中 Write/Edit 类工具写过的绝对路径
+  const toolInputs = new Map(); // callID → scheduled 入参（钩子拒绝时补写审计用）
 
   // 模型候选链：请求指定（如有）> 管理员默认；再按顺序追加 fallbacks
   const adminCfg = loadAdminModelConfig() || {};
@@ -1119,7 +1036,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
   const chain = [primary, ...fallbacks].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
 
   const runOnce = (modelName) => new Promise((resolve) => {
-    const child = dispatchPrompt({ uid: user.uid, ws, message, sessionId, mode, model: modelName || undefined, attachments: safeAtts });
+    const child = dispatchPrompt({ uid: user.uid, ws: ws || "default", message, sessionId, mode, model: modelName || undefined, attachments: safeAtts });
     run.pid = child.pid;
     let buf = "", sawResult = false, sawText = false, sawTool = false, sawError = null;
     let rawBlock = null; // CLI 早退响应（/help 纯文本、Unknown command 多行 JSON）逐行解析失败时在这里攒块
@@ -1147,17 +1064,30 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
           const fp = wi && (wi.file_path || wi.filePath || wi.path || wi.notebook_path);
           if (typeof fp === "string" && fp.trim()) writtenFiles.add(path.normalize(fp.trim()));
         }
-        const reason = guardrailCheck({ tool: toolName, input: p.input ?? p.args ?? p.summary ?? "", wsPath: dir, wsRoot, homePath });
-        if (reason) {
+        // scheduled 事件带完整入参：按 callID 缓存，供钩子拒绝时补写审计
+        if (p.kind === "scheduled" && p.toolCallId) toolInputs.set(p.toolCallId, p.input ?? p.args ?? "");
+        // 钩子哨兵：正常情况下每次工具调用前守卫钩子都会运行（回执先于第 2 次调用到达）；
+        // 连续多个工具事件都不见钩子回执 = 钩子静默失效（内核升级改 schema / 脚本缺失等）
+        if (!run.hookSeen && (run.noHookTools = (run.noHookTools || 0) + 1) === 5) {
+          log(`[guardrail] 警告：user=${user.uid.slice(0, 8)} ws=${ws} 已见 5 次工具事件但无守卫钩子回执，钩子可能未生效`);
+        }
+      }
+      // PreToolUse 守卫钩子回执：内核对每次钩子执行发两条 session.updated（payload 顶层
+      // 带 hookEventName/outcome，descriptor 为进程描述）。blocked = 内核已拒绝该工具调用
+      // 并把原因回喂模型——run 继续跑（自愈重试），portal 只做记录与告知，不再 kill。
+      if (ev.type === "session.updated" && p.hookEventName === "PreToolUse" && p.outcome) {
+        run.hookSeen = true;
+        if (p.outcome === "blocked" && p.blockReason) {
+          const tool = String(p.toolName || "tool");
+          const ti = toolInputs.get(p.toolCallId || "");
           audit({
             ts: new Date().toISOString(), kind: "guardrail", uid: user.uid, username: user.username, ws, runId,
             message: String(message || "").slice(0, 500), sessionId: sessionIdSeen,
-            tool: toolName, rule: reason,
-            input: String(typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? p.args ?? "")).slice(0, 400),
+            tool, rule: String(p.blockReason).slice(0, 200),
+            input: String(typeof ti === "string" ? ti : JSON.stringify(ti ?? "")).slice(0, 400),
           });
-          log(`guardrail: user=${user.uid.slice(0, 8)} ws=${ws} ${reason}`);
-          runEmit(run, "guardrail", { message: reason, tool: toolName });
-          try { child.kill(); } catch { /* noop */ }
+          log(`guardrail: user=${user.uid.slice(0, 8)} ws=${ws} ${String(p.blockReason).slice(0, 80)}`);
+          runEmit(run, "guardrail", { message: String(p.blockReason), tool });
         }
       }
       if (ev.type === "session.updated" && p.resultType === "error") sawError = p.error || "模型调用错误";
