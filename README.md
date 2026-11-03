@@ -63,11 +63,24 @@ ADMIN_PASSWORD=youradmin PORT=9900 node portal/server.mjs
 
 ## 内核升级（官方发新版后）
 
+仓库根目录有免记参数的包装脚本，双击 `update-kernel.bat`（Windows）会出交互菜单：
+
 ```bash
-node scripts/update-kernel.mjs --check      # 看当前/最新可用版本
-node scripts/update-kernel.mjs              # 自动升级（默认 CDN 源，探测+sha256 校验+原子切换）
-node scripts/update-kernel.mjs --source desktop   # 从新装的桌面端复制（版本最新时推荐）
-node scripts/update-kernel.mjs --rollback   # 出问题回滚
+bash update-kernel.sh check        # 看当前/最新可用版本
+bash update-kernel.sh update       # 自动升级（CDN 源，探测+sha256 校验+原子切换）
+bash update-kernel.sh desktop      # 从新装的桌面端复制（版本最新时推荐）
+bash update-kernel.sh rollback     # 出问题回滚
+
+update-kernel.bat check            # Windows 同款；无参数运行出菜单
+```
+
+需要更细的控制（手动 staging、指定桌面路径等）直接调底层脚本，包装脚本也支持原样透传 flag：
+
+```bash
+node scripts/update-kernel.mjs --check                  # 同 check
+node scripts/update-kernel.mjs --source manual --commit # 提交 kernel/.staging 为新内核
+node scripts/update-kernel.mjs --source desktop --desktop <…/ZCode/resources/glm>
+node scripts/update-kernel.mjs --rollback               # 同 rollback
 ```
 
 升级期间运行中的会话不受影响（内核目录原子切换）；用户数据在 `data/` 下与内核完全无关。
