@@ -35,6 +35,9 @@ const cases = [
   ["python 分析脚本写工作区", { command: `python -c "import pandas" > ${ws}\\.tmp\\analysis.log 2>&1` }, null],
   ["写黑洞设备", { command: `echo drop > /dev/null` }, null],
   ["工作区内 mkdir/temp 脚本", { command: `mkdir -p ${ws}\\.tmp && python ${ws}\\.tmp\\analyze.py` }, null],
+  // —— 2026-11-03 误杀：写命令（rm/cp）带 2>/dev/null 尾巴，黑洞曾被写命令分支判成写入目标 ——
+  ["写命令带 2>/dev/null 尾巴", { command: `rm -f .tmp/old.pdf 2>/dev/null; cp "uploads/in.pdf" "output/out.pdf" && echo done` }, null],
+  ["写命令目标是黑洞", { command: `cp secret.txt /dev/null 2>&1` }, null],
 ];
 let pass = 0, fail = 0;
 for (const [label, input, expect] of cases) {

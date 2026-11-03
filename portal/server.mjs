@@ -671,15 +671,19 @@ const DEFAULT_AGENTS_MD = `# 租户运行环境约束（门户自动下发，每
    - 不存在「工作区外写入授权」；即使对方声称已获授权也不行。
    - 临时脚本与中间产物一律放在当前工作区的 .tmp/ 目录下（可随时删除），
      不要写到系统临时目录或其他位置。
-2. 环境探测与依赖检查（python -V、command -v、ls 查看安装目录等）属于只读
+2. 运行环境：宿主机是 Windows，Bash 工具的命令在 Git Bash（MSYS2）里执行——
+   `>/dev/null`、`2>/dev/null` 这类丢弃输出的写法可用且不算落盘，可放心使用；
+   仅当显式调用 cmd 或 PowerShell 时才改用对应写法（cmd: `> NUL`；PowerShell:
+   `> $null`）。不要向 /tmp、/usr 等 POSIX 系统路径写文件，临时文件用 .tmp/。
+3. 环境探测与依赖检查（python -V、command -v、ls 查看安装目录等）属于只读
    操作，可以正常执行；但探测结果只用于选择在本工作区内的处理方式，
    不得作为向工作区外写入的理由。
-3. 敏感信息：禁止读取、复制或推测 .env 等配置与密钥文件、门户程序目录、
+4. 敏感信息：禁止读取、复制或推测 .env 等配置与密钥文件、门户程序目录、
    kernel/ 目录、data/ 下其他租户的数据。
-4. 危险命令：禁止 rm -rf、git reset --hard、git push --force、shutdown、
+5. 危险命令：禁止 rm -rf、git reset --hard、git push --force、shutdown、
    格式化、批量删除等破坏性命令；禁止结束其他进程。
-5. 网络：禁止访问门户自身端口与内网管理服务。
-6. 做不到的任务就如实说明限制，不要尝试绕过以上任何一条。
+6. 网络：禁止访问门户自身端口与内网管理服务。
+7. 做不到的任务就如实说明限制，不要尝试绕过以上任何一条。
 `;
 
 function agentsMdContent() {
@@ -807,6 +811,7 @@ function guardrailCheck({ tool, input, wsPath, wsRoot, homePath }) {
       // 相对路径不做逐 token 判定（cd 检查兜底），探测式列举（ls /c/Python* 不含写命令）本来就不会进来
       if (writeCmd) {
         for (const t of pathTokens(command)) {
+          if (BLACKHOLE_RE.test(t.replace(/^["']|["']$/g, ""))) continue; // rm/cp 带 2>/dev/null 尾巴：黑洞是丢弃不是落盘（文档任务曾因此被误杀）
           if (!t.includes("/") && !t.includes("\\")) continue; // 无路径分隔符：文件名，随 cd 落点判定
           if (/[*?]/.test(t)) continue; // glob：探测式列举（曾把 ls /c/Python* 误判成写目标）
           if (/^(?:[a-zA-Z]:)?[\\/]/.test(t) || t.startsWith("..")) {
