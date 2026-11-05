@@ -719,11 +719,29 @@ const DEFAULT_AGENTS_MD = `# 租户运行环境约束（门户自动下发，每
 function agentsMdContent() {
   try { return fs.readFileSync(AGENTS_MD_FILE, "utf8"); } catch { return DEFAULT_AGENTS_MD; }
 }
+// 动态时间戳：每次派发刷新，治「续用旧会话时内核 currentDate 过期」的根
+const WEEKDAY_CN = ["日", "一", "二", "三", "四", "五", "六"];
+function agentsMdStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  const ts = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+    ` ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return `
+## 当前时间（门户盖章，每次派发时刷新）
+
+- 本次消息发出时刻：${ts} 星期${WEEKDAY_CN[d.getDay()]}（宿主本地时间）。
+- 会话上下文与历史回复中出现的日期（如 currentDate、旧回复里的日期）只是
+  当时的快照，接着旧会话继续聊时很可能已经过期，不能当作现在的时间。
+- 凡涉及「今天 / 昨天 / 现在 / 最近 / 本周」等时间判断，先对照本节时间；
+  需要更精确时运行 date 命令核实。若上下文里的日期与本节冲突，以本节为准，
+  并向用户指出上下文中的日期已过期。
+`;
+}
 function stampAgentsMd(uid) {
   const dir = path.join(ensureUserHome(uid), ".zcode");
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "AGENTS.md"), agentsMdContent());
+    fs.writeFileSync(path.join(dir, "AGENTS.md"), agentsMdContent() + agentsMdStamp());
   } catch { /* 磁盘异常不阻断派发 */ }
 }
 function audit(entry) {
