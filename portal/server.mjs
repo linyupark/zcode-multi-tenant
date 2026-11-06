@@ -665,6 +665,13 @@ function cliEnv(uid, wsPath) {
   for (const [k, v] of Object.entries(skillEnv)) {
     if (SKILL_ENV_NAME_RE.test(k) && v != null && String(v).length <= 4096 && !k.startsWith("ZCODE_")) env[k] = String(v);
   }
+  // 租户身份（非机密）：AGENTS.md「当前对话用户」节与技能命名空间（personal-memo
+  // 等按人区分的技能）同源。放在清洗循环之后，确保不被误剥
+  const u = loadUsers()[uid];
+  if (u) {
+    env.ZCODE_USER_NAME = String(u.displayName || u.username).slice(0, 64);
+    env.ZCODE_USER_ACCOUNT = String(u.username).slice(0, 64);
+  }
   return env;
 }
 
@@ -765,11 +772,24 @@ function agentsMdStamp() {
 上下文日期已过期。
 `;
 }
+// 租户身份节：让 AI 知道对话者是谁。与技能脚本读的 ZCODE_USER_NAME /
+// ZCODE_USER_ACCOUNT 同源（cliEnv 每次派发注入）。
+function agentsMdUser(user) {
+  if (!user) return "";
+  const name = String(user.displayName || user.username).slice(0, 64);
+  return `
+## 当前对话用户
+
+正在与你对话的是「${name}」（账号 ${user.username}）。用显示名称呼对方；
+按人区分的个人数据（如 personal-memo 技能的命名空间前缀）以这个身份为准，
+不要反问对方是谁。
+`;
+}
 function stampAgentsMd(uid) {
   const dir = path.join(ensureUserHome(uid), ".zcode");
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "AGENTS.md"), agentsMdContent() + agentsMdStamp());
+    fs.writeFileSync(path.join(dir, "AGENTS.md"), agentsMdContent() + agentsMdStamp() + agentsMdUser(loadUsers()[uid]));
   } catch { /* 磁盘异常不阻断派发 */ }
 }
 function audit(entry) {

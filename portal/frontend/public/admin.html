@@ -282,7 +282,7 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
     <section>
       <h2>技能环境变量 <span class="note">注入每个租户会话环境；技能脚本可直接用，租户与 AI 读不到值</span></h2>
       <div class="card" style="padding:20px">
-        <div class="hint" style="margin-bottom:12px">供公共技能消费的企业凭据（如 <code class="mono">WEKNORA_BASE_URL</code> / <code class="mono">WEKNORA_API_KEY</code>）。保存后下一个会话生效；守卫会拦截 printenv / echo $VAR 等外显行为。值只存 <code class="mono">data/skill-env.json</code>，此处仅显示掩码。</div>
+        <div class="hint" style="margin-bottom:12px">供公共技能消费的企业凭据（如 <code class="mono">WEKNORA_BASE_URL</code> / <code class="mono">WEKNORA_API_KEY</code>）。保存后下一个会话生效；守卫会拦截 printenv / echo $VAR 等外显行为。值只存 <code class="mono">data/skill-env.json</code>，此处仅显示掩码。门户另自动注入只读身份变量 <code class="mono">ZCODE_USER_NAME</code>（租户显示名）与 <code class="mono">ZCODE_USER_ACCOUNT</code>（账号），供技能做按人区分（如 personal-memo 命名空间），无需在此配置。</div>
         <div id="senv-list" style="margin-bottom:12px"></div>
         <div class="btn-row">
           <input type="text" id="senv-name" placeholder="变量名，如 WEKNORA_API_KEY" style="width:260px;padding:7px 10px;border:1px solid var(--control);border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:12px">
