@@ -358,6 +358,30 @@ function saveAdminMcp(cfg) {
   try { fs.chmodSync(mcpConfigPath(), 0o600); } catch { /* win */ }
 }
 
+// ---------- 技能环境变量（管理员统一配置，注入租户会话环境；技能可用、租户不可见） ----------
+// 存储 data/skill-env.json：{ KEY: value }。值只在服务端与租户进程 env 里存在，
+// admin GET 只回掩码；guardrail 钩子拦 printenv / echo $KEY 等外显，技能脚本进程内自用不拦。
+const skillEnvPath = () => path.join(DATA_DIR, "skill-env.json");
+const SKILL_ENV_NAME_RE = /^[A-Z][A-Z0-9_]{0,47}$/;
+
+function loadSkillEnv() {
+  try {
+    const obj = JSON.parse(fs.readFileSync(skillEnvPath(), "utf8"));
+    return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : {};
+  } catch { return {}; }
+}
+function saveSkillEnv(cfg) {
+  fs.writeFileSync(skillEnvPath(), JSON.stringify(cfg, null, 2));
+  try { fs.chmodSync(skillEnvPath(), 0o600); } catch { /* win */ }
+}
+/** 值掩码：sk-abcdefg… → sk-a****（12位）；仅 admin 界面确认「配过、没配错」用 */
+function maskSecret(v) {
+  const s = String(v ?? "");
+  if (!s) return "";
+  const head = s.slice(0, Math.min(4, Math.max(1, Math.floor(s.length / 8))));
+  return `${head}****（${s.length}位）`;
+}
+
 /** 把管理员 MCP 配置合并进用户 HOME 的 cli/config.json（全量覆盖 mcp.servers，保留其他字段） */
 function applyAdminMcpToUser(uid, adminCfg = loadAdminMcp()) {
   const home = userHome(uid);
@@ -629,6 +653,18 @@ function cliEnv(uid, wsPath) {
   else delete env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE;
   env.ZCODE_PORTAL_HOME = home; // 供 hooks / 技能识别 portal 环境
   if (wsPath) env.ZCODE_PORTAL_WS = wsPath; // 守卫钩子的租户上下文（工作区绝对路径）
+  // 宿主机密不进租户进程：portal 自己的 .env（ADMIN_PASSWORD/FLASK_SECRET/…）经
+  // process.env 全量继承，AI 一条 printenv 就能看光——按名剥离敏感项
+  for (const k of Object.keys(env)) {
+    if (k === "ZCODE_PORTAL_HOME" || k === "ZCODE_PORTAL_WS") continue; // 刚设置的门面变量
+    if (/PASSWORD|SECRET|TOKEN|API_KEY|ADMIN_/i.test(k) || k === "PORT" || k === "HOST") delete env[k];
+  }
+  // 技能环境变量（admin 统一配置）：技能脚本在进程内直接读，值不落工作区、钩子拦外显。
+  // 不覆盖 ZCODE_* 内核保留变量；读取失败（fail-open）= 本轮不注入，不影响派发
+  const skillEnv = loadSkillEnv();
+  for (const [k, v] of Object.entries(skillEnv)) {
+    if (SKILL_ENV_NAME_RE.test(k) && v != null && String(v).length <= 4096 && !k.startsWith("ZCODE_")) env[k] = String(v);
+  }
   return env;
 }
 
@@ -705,6 +741,9 @@ const DEFAULT_AGENTS_MD = `# 多租户门户沙箱约束（最高优先级，门
    不结束其他进程。
 6. 禁止访问门户自身端口与内网管理服务。
 7. 做不到的任务如实说明限制，不要绕过以上约束。
+8. 企业凭据（API 地址/密钥等）由门户自动注入会话环境，技能脚本会直接带上；
+   禁止用 printenv、echo $VAR 等任何方式打印、转存或外发这些环境变量——
+   你不需要看到值，调用技能时它们自动生效。
 `;
 
 function agentsMdContent() {
@@ -1650,6 +1689,42 @@ route("DELETE", /^\/api\/admin\/audit$/, async (req, res) => {
   }
   log(`audit cleared by admin: kind=${kind} removed=${removed}`);
   send(res, 200, { ok: true, removed, kind });
+});
+
+// --- 技能环境变量：admin 增删查（值永不回传，只回掩码） ---
+route("GET", /^\/api\/admin\/skill-env$/, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const cfg = loadSkillEnv();
+  send(res, 200, { vars: Object.entries(cfg).map(([name, value]) => ({ name, masked: maskSecret(value) })) });
+});
+
+route("POST", /^\/api\/admin\/skill-env$/, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { name, value } = await readJson(req);
+  if (!SKILL_ENV_NAME_RE.test(String(name || ""))) return send(res, 400, { error: "变量名需大写字母开头、仅大写字母/数字/下划线，≤48 位" });
+  const cfg = loadSkillEnv();
+  const isNew = !(name in cfg);
+  if (value == null || String(value) === "") {
+    delete cfg[name]; // value 留空 = 删除该项
+    saveSkillEnv(cfg);
+    log(`skill-env removed: ${name}`);
+    return send(res, 200, { ok: true, removed: name });
+  }
+  if (String(value).length > 4096) return send(res, 400, { error: "值过长（>4KB）" });
+  cfg[name] = String(value);
+  saveSkillEnv(cfg);
+  log(`skill-env set: ${name}${isNew ? " (new)" : " (updated)"}`);
+  send(res, 200, { ok: true, name, masked: maskSecret(value) });
+});
+
+route("DELETE", /^\/api\/admin\/skill-env\/([A-Z][A-Z0-9_]{0,47})$/, async (req, res, m) => {
+  if (!requireAdmin(req, res)) return;
+  const cfg = loadSkillEnv();
+  const existed = m[1] in cfg;
+  delete cfg[m[1]];
+  saveSkillEnv(cfg);
+  if (existed) log(`skill-env removed: ${m[1]}`);
+  send(res, 200, { ok: true, removed: existed ? m[1] : null });
 });
 
 route("POST", /^\/api\/admin\/agents-md$/, async (req, res) => {

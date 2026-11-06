@@ -13,6 +13,7 @@
 // 判定逻辑从 server.mjs guardrailCheck 原样移植（黑洞豁免/glob 跳过/写命令与
 // 重定向两分支/protectRead/cd 检查），语义与 2026-11-02、11-03 两轮误杀修复一致。
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PORTAL_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,55 @@ const DESTRUCTIVE_RE = /\b(git\s+push\s+(?:--force\b|-f\b)|git\s+reset\s+--hard|
 const WRITE_TOOLS_RE = /^(write|edit|multiedit|notebookedit|create|replace)$/i;
 // 黑洞设备：重定向到这里 = 丢弃输出，不是真实写入
 const BLACKHOLE_RE = /^(?:[a-zA-Z]:)?[\\/]?(?:dev[\\/])?(?:null|stdout|stderr|zero|nul)[\\/]?$/i;
+
+// —— 技能凭据外显拦截（门户注入的 env 变量：技能脚本进程内可用，AI 不得看值）——
+// 整环境转储（不看键名，先见之明：键名可枚举则值也可枚举）
+const ENV_DUMP_RES = [
+  /\bprintenv\b/i,
+  /(?:^|\||&&|;|\$\()\s*env\s*(?:$|\||&&|;|\))/, // 独立 env（env FOO=1 cmd 赋值运行不算，另判）
+  /\bexport\s+-p\b/i,
+  /Get-ChildItem\s+env:/i,
+  /(?:os|process|sys)\.(?:environ\b|env\b\s*;?\s*$)/im, // python os.environ / node process.env（-c 内联）
+  /\bGetEnvironmentVariables\b/i,
+];
+// 打印类命令前缀：出现在它后面的 $KEY / %KEY% 就是「外显」而非「使用」
+const ENV_PRINT_RE = /^\s*(?:echo|printf|print|cat|type|Write-Output|Write-Host|puts|console\.log|pprint|println)\b/i;
+
+/**
+ * 技能凭据外显判定。protectedNames = 门户注入的 env 键名列表（data/skill-env.json）。
+ * 返回拒绝理由（null = 放行）。语义：值可以被「用」（curl 头、脚本参数、子进程继承），
+ * 不能被「看」（打印/转储/落盘转存）。
+ */
+export function evaluateEnvExposure({ command, protectedNames }) {
+  if (!command || !protectedNames?.length) return null;
+  const cmd = String(command);
+  // 1) 整环境转储：不管键名，全拦（printenv 等）。独立 env 转储除外——先排除赋值运行
+  const bareEnv = cmd.match(/(?:^|[;&|(]\s*)env\s*(?=$|[;&|)])/);
+  if (bareEnv && !/\benv\s+[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) return DENY_ENV;
+  for (const re of ENV_DUMP_RES) if (re.test(cmd)) return DENY_ENV;
+  // 2) 已注册键名外显：echo/printf 等打印命令展开 $KEY / ${KEY} / %KEY%
+  const isPrint = ENV_PRINT_RE.test(cmd);
+  if (isPrint) {
+    for (const name of protectedNames) {
+      const re = new RegExp(`\\$\\{?${name}\\}?|%${name}%`, "i");
+      if (re.test(cmd)) return DENY_ENV + `（变量 ${name}）`;
+    }
+  }
+  // 3) 打印命令展开任意 env 键再侦察：`echo $WEKNORA_` 前缀枚举（变量名部分未知）
+  if (isPrint && /\$[A-Z_]{4,}\b/.test(cmd) && new RegExp(protectedNames.join("|"), "i").test(cmd.replace(/\$[A-Z_]+/g, ""))) {
+    return DENY_ENV;
+  }
+  return null;
+}
+const DENY_ENV = "环境变量访问被拒绝：门户注入的企业凭据（API 地址/密钥等）已由系统自动提供给技能脚本使用，无需查看。禁止 printenv、echo $VAR 等方式打印、转存或外发这些变量；技能会自动带上，你正常调用技能即可。";
+
+/** 读取门户注入的技能 env 键名（只读名字，不读值）。读不到 = 空列表，fail-open。 */
+export function loadProtectedEnvNames(root = DEFAULT_ROOT) {
+  try {
+    const obj = JSON.parse(fs.readFileSync(path.join(root, "data", "skill-env.json"), "utf8"));
+    return Object.keys(obj || {}).filter((k) => /^[A-Z][A-Z0-9_]{0,47}$/.test(k));
+  } catch { return []; }
+}
 
 function redirectTargets(cmd) {
   const out = [];
@@ -50,7 +100,7 @@ function pathTokens(cmd) {
  * 路径语义与旧 portal 守卫一致：相对路径按工作区解析；Git Bash 风格 /c/...
  * 会落在工作区盘符下解析（不等于真实宿主路径，但必然不在租户范围内 → 拦）。
  */
-export function evaluate({ tool, input, wsPath, wsRoot, homePath, root = DEFAULT_ROOT, dataDir = path.join(DEFAULT_ROOT, "data"), kernelDir = path.join(DEFAULT_ROOT, "kernel") }) {
+export function evaluate({ tool, input, wsPath, wsRoot, homePath, protectedNames = [], root = DEFAULT_ROOT, dataDir = path.join(DEFAULT_ROOT, "data"), kernelDir = path.join(DEFAULT_ROOT, "kernel") }) {
   // 路径归一化：portal env 与工具入参的盘符分隔符必须一致（env 若为正斜杠，
   // startsWith 前缀比对会全 miss → 连工作区内写入都被误拦，runD 实测踩过）
   wsPath = path.resolve(wsPath);
@@ -133,6 +183,9 @@ export function evaluate({ tool, input, wsPath, wsRoot, homePath, root = DEFAULT
     }
     // 非路径型高危：写注册表、计划任务持久化等常见手段
     if (/\b(schtasks|at\s+\d|taskkill\s+\/f|wmic\s+process\s+call)\b/i.test(command)) return DENY_SYSTEM;
+    // 技能凭据外显：printenv / echo $KEY 等（protectedNames 为空时内部直接放行）
+    const envReason = evaluateEnvExposure({ command, protectedNames });
+    if (envReason) return envReason;
   }
   return null;
 }
@@ -165,6 +218,7 @@ if (isMain) {
       wsPath,
       wsRoot: path.dirname(wsPath),
       homePath,
+      protectedNames: loadProtectedEnvNames(), // data/skill-env.json 键名；读不到 = 空表 fail-open
     });
     if (reason) {
       console.log(JSON.stringify({

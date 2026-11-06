@@ -38,10 +38,33 @@ const cases = [
   ["Read 工具读工作区", { tool: "Read", file_path: `${ws}\\uploads\\in.pdf` }, null],
   ["HOME 技能目录写入", { tool: "Write", file_path: `${home}\\.zcode\\skills\\x\\SKILL.md` }, null],
 ];
+// —— 技能凭据外显（protectedNames 注入 data/skill-env.json 键名模拟）——
+const PROTECTED = ["WEKNORA_BASE_URL", "WEKNORA_API_KEY"];
+for (const [label, input, expect] of [
+  // 必须拒绝：整环境转储 / 已注册键名外显
+  ["printenv 单键", { command: `printenv WEKNORA_API_KEY` }, "deny"],
+  ["printenv 管道过滤", { command: `printenv | grep -i weknora` }, "deny"],
+  ["echo $KEY 外显", { command: `echo $WEKNORA_API_KEY` }, "deny"],
+  ["echo ${KEY} 外显", { command: `echo "\${WEKNORA_BASE_URL}/health"` }, "deny"],
+  ["python 内联 os.environ", { command: `python -c "import os; print(os.environ['WEKNORA_API_KEY'])"` }, "deny"],
+  ["独立 env 转储", { command: `env | grep -i key` }, "deny"],
+  // 必须放行：正常使用（技能脚本就是这么用的）
+  ["curl Bearer 使用", { command: `curl -s -H "Authorization: Bearer $WEKNORA_API_KEY" https://srv/api/v1/docs` }, null],
+  ["env 赋值运行", { command: `env FOO=1 npm run build` }, null],
+  ["node 单值 process.env", { command: `node -e "fetch(process.env.WEKNORA_BASE_URL + '/x')"` }, null],
+  ["普通脚本调用", { command: `python .zcode/skills/weknora/run.py --query test` }, null],
+  // 无注册变量时同类命令放行（fail-open：没配 skill-env 就不启用该层）
+  ["未注册变量 echo 放行", { command: `echo $HOME`, _noProtected: true }, null],
+]) {
+  const tool = input.tool || "Bash";
+  const pn = input._noProtected ? [] : PROTECTED;
+  delete input._noProtected;
+  cases.push([label, input, expect, pn]);
+}
 let pass = 0, fail = 0;
-for (const [label, input, expect] of cases) {
+for (const [label, input, expect, pn] of cases) {
   const tool = input.tool || (input.command !== undefined ? "Bash" : "Write");
-  const r = evaluate({ tool, input, wsPath: ws, wsRoot, homePath: home, root, dataDir, kernelDir });
+  const r = evaluate({ tool, input, wsPath: ws, wsRoot, homePath: home, root, dataDir, kernelDir, protectedNames: pn });
   const blocked = !!r;
   const ok = expect === "deny" ? blocked : !blocked;
   if (ok) pass++; else fail++;

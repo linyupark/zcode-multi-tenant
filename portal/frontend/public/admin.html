@@ -280,6 +280,21 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
 
     <div class="page hidden" data-page="tools">
     <section>
+      <h2>技能环境变量 <span class="note">注入每个租户会话环境；技能脚本可直接用，租户与 AI 读不到值</span></h2>
+      <div class="card" style="padding:20px">
+        <div class="hint" style="margin-bottom:12px">供公共技能消费的企业凭据（如 <code class="mono">WEKNORA_BASE_URL</code> / <code class="mono">WEKNORA_API_KEY</code>）。保存后下一个会话生效；守卫会拦截 printenv / echo $VAR 等外显行为。值只存 <code class="mono">data/skill-env.json</code>，此处仅显示掩码。</div>
+        <div id="senv-list" style="margin-bottom:12px"></div>
+        <div class="btn-row">
+          <input type="text" id="senv-name" placeholder="变量名，如 WEKNORA_API_KEY" style="width:260px;padding:7px 10px;border:1px solid var(--control);border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:12px">
+          <input type="text" id="senv-value" placeholder="值（留空提交 = 删除该变量）" style="flex:1;min-width:200px;padding:7px 10px;border:1px solid var(--control);border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:12px">
+          <button id="btn-senv-save">保存</button>
+        </div>
+        <div class="msg ok" id="senv-ok"></div>
+        <div class="msg err" id="senv-err"></div>
+      </div>
+    </section>
+
+    <section>
       <h2>企业全局技能 <span class="note">全员共享，放这里 → 自动注入每个租户；官方内核技能随内核走，无需配置</span></h2>
       <div class="card" style="padding:20px">
         <div class="hint" style="margin-bottom:12px">两种方式：① 直接把技能目录放到 <code class="mono" id="skills-dir">data/skills/</code>；② 在下面上传 zip（根层含 SKILL.md）或单个 SKILL.md。租户自建的同名技能不会被覆盖。</div>
@@ -360,7 +375,7 @@ $("btn-open-portal").onclick = () => window.open("/", "_blank");
 async function enter() {
   $("gate").classList.add("hidden");
   $("shell").classList.remove("hidden");
-  await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp(), loadAgentsMd(), loadAudit()]);
+  await Promise.all([loadModel(), loadUsers(), loadBranding(), loadSkills(), loadMcp(), loadAgentsMd(), loadAudit(), loadSkillEnv()]);
   showPage("model");
 }
 
@@ -379,7 +394,7 @@ function showPage(page) {
   if (page === "tenants") loadUsers();
   else if (page === "brand") loadBranding();
   else if (page === "policy") { loadAgentsMd(); loadAudit(); }
-  else if (page === "tools") { loadSkills(); loadMcp(); }
+  else if (page === "tools") { loadSkills(); loadMcp(); loadSkillEnv(); }
 }
 document.querySelectorAll("#sidebar .nav-item[data-page]").forEach((el) => {
   el.onclick = () => showPage(el.dataset.page);
@@ -603,6 +618,38 @@ $("btn-au-clear").onclick = async () => {
     await loadAudit();
     $("au-note").textContent = "已清空拦截记录";
   } catch (e) { $("au-note").textContent = "清空失败：" + e.message; }
+};
+
+/* ---------- 技能环境变量 ---------- */
+async function loadSkillEnv() {
+  try {
+    const { vars } = await api("/api/admin/skill-env");
+    $("senv-list").innerHTML = vars.length
+      ? `<table><thead><tr><th>变量名</th><th>值</th><th class="num"></th></tr></thead><tbody>${
+          vars.map((v) => `<tr>
+            <td class="mono"><b>${esc(v.name)}</b></td>
+            <td class="hint mono">${esc(v.masked)}</td>
+            <td class="num"><button class="ghost" data-senv-del="${esc(v.name)}" style="padding:3px 10px;color:var(--negative);border-color:var(--negative)">删除</button></td>
+          </tr>`).join("")}</tbody></table>`
+      : `<div class="hint">还没有配置——公共技能需要的环境变量（API 地址、密钥）加在这里</div>`;
+    $("senv-list").querySelectorAll("[data-senv-del]").forEach((btn) => btn.onclick = async () => {
+      if (!confirm(`删除变量 ${btn.dataset.senvDel}？（下一个会话生效）`)) return;
+      await api(`/api/admin/skill-env/${btn.dataset.senvDel}`, { method: "DELETE" });
+      $("senv-ok").textContent = "已删除：下一个会话生效";
+      loadSkillEnv();
+    });
+  } catch (e) { $("senv-err").textContent = e.message; }
+}
+$("btn-senv-save").onclick = async () => {
+  $("senv-ok").textContent = ""; $("senv-err").textContent = "";
+  const name = $("senv-name").value.trim();
+  const value = $("senv-value").value;
+  try {
+    const j = await api("/api/admin/skill-env", { method: "POST", body: JSON.stringify({ name, value }) });
+    $("senv-ok").textContent = j.removed ? `已删除 ${j.removed}：下一个会话生效` : `已保存 ${j.name}（${j.masked}）：下一个会话生效`;
+    $("senv-name").value = ""; $("senv-value").value = "";
+    loadSkillEnv();
+  } catch (e) { $("senv-err").textContent = e.message; }
 };
 
 /* ---------- 企业全局技能 ---------- */
