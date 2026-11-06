@@ -1620,6 +1620,38 @@ route("GET", /^\/api\/admin\/audit$/, async (req, res) => {
   send(res, 200, readAudit(limit, q.get("kind") || "guardrail"));
 });
 
+// 清空审计：默认只清当前面板展示的拦截记录（含无 kind 字段的旧记录），
+// 保留 file-delete / account / impersonate 等其他类别——审计日志不应被顺手抹掉。
+// ?kind=all 才整体清空。
+route("DELETE", /^\/api\/admin\/audit$/, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const q = new URL(req.url, "http://x").searchParams;
+  const kind = q.get("kind") || "guardrail";
+  if (!fs.existsSync(AUDIT_LOG)) return send(res, 200, { ok: true, removed: 0 });
+  let removed = 0;
+  if (kind === "all") {
+    try {
+      removed = fs.readFileSync(AUDIT_LOG, "utf8").split("\n").filter(Boolean).length;
+    } catch { /* 读不到就按 0 计 */ }
+    fs.rmSync(AUDIT_LOG, { force: true });
+  } else {
+    let raw = "";
+    try { raw = fs.readFileSync(AUDIT_LOG, "utf8"); } catch { return send(res, 500, { error: "读取审计日志失败" }); }
+    const kept = [];
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      let r = null;
+      try { r = JSON.parse(line); } catch { kept.push(line); continue; } // 坏行保留原样，不丢数据
+      if (r && (r.kind || "guardrail") !== kind) kept.push(line); else removed++;
+    }
+    // 同步整体覆写：仅 server 进程写此文件，无并发追加风险
+    if (kept.length) fs.writeFileSync(AUDIT_LOG, kept.join("\n") + "\n");
+    else fs.rmSync(AUDIT_LOG, { force: true });
+  }
+  log(`audit cleared by admin: kind=${kind} removed=${removed}`);
+  send(res, 200, { ok: true, removed, kind });
+});
+
 route("POST", /^\/api\/admin\/agents-md$/, async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const { content } = await readJson(req);

@@ -272,7 +272,7 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
       <h2>行为审计 <span class="note" id="au-note"></span><span class="note">拦截时租户发送的消息与命中的规则，用于核查拦截是否合理</span></h2>
       <div class="card" style="padding:20px">
         <div id="au-stats" style="margin-bottom:12px"></div>
-        <div class="btn-row" style="margin:0 0 12px"><button class="ghost" id="btn-au-refresh">刷新记录</button><span class="hint" id="au-file"></span></div>
+        <div class="btn-row" style="margin:0 0 12px"><button class="ghost" id="btn-au-refresh">刷新记录</button><button class="ghost" id="btn-au-clear" style="color:var(--negative);border-color:var(--negative)">清空拦截记录</button><span class="hint" id="au-file"></span></div>
         <div id="au-list"></div>
       </div>
     </section>
@@ -573,6 +573,7 @@ async function loadAudit() {
     const stats = Object.entries(j.stats || {});
     $("au-note").textContent = j.total ? `${j.total} 条拦截记录` : "";
     $("au-file").textContent = "data/audit.log";
+    $("btn-au-clear").disabled = !j.total;
     $("au-stats").innerHTML = stats.length
       ? stats.map(([rule, n]) => `<span class="pill" style="margin-right:8px">${esc(rule)} × ${n}</span>`).join("")
       : `<span class="hint">还没有拦截记录——租户触发行为约束后会出现在这里</span>`;
@@ -594,6 +595,15 @@ async function loadAudit() {
   } catch (e) { $("au-list").innerHTML = `<div class="hint">加载失败：${esc(e.message)}</div>`; }
 }
 $("btn-au-refresh").onclick = loadAudit;
+$("btn-au-clear").onclick = async () => {
+  if (!confirm("清空全部拦截记录？该操作不可撤销（不影响文件删除、账号操作等其他审计）。")) return;
+  try {
+    const j = await api("/api/admin/audit", { method: "DELETE" });
+    $("au-note").textContent = `已清空 ${j.removed} 条`;
+    await loadAudit();
+    $("au-note").textContent = "已清空拦截记录";
+  } catch (e) { $("au-note").textContent = "清空失败：" + e.message; }
+};
 
 /* ---------- 企业全局技能 ---------- */
 async function loadSkills() {
