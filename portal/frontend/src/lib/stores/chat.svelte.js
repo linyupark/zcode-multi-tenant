@@ -149,8 +149,9 @@ function makeStreamHandler(t) {
       t.fallbacks.push({ from: ev.from, to: ev.to, reason: ev.reason });
       setStatus("已切换备用模型…");
     } else if (evName === "guardrail") {
+      // 仅在对话流内展示拦截说明（Turn.svelte violations），
+      // 不再写底部状态行——同一条文案上下重复会误导用户。
       t.violations.push({ message: ev.message, tool: ev.tool });
-      setStatus("安全拦截：" + ev.message);
     } else if (evName === "end") {
       setStatus(ev.code === 0 ? "完成" : (`退出码 ${ev.code}` + (ev.error ? "：" + String(ev.error).slice(0, 80) : "")));
       if (ev.sessionId && session.sessionId !== ev.sessionId) { session.sessionId = ev.sessionId; syncHash(); }
