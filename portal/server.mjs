@@ -1114,7 +1114,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
     return; // 本请求的 SSE 由 dispatchQueued 派发时接管
   }
   return handleChatDispatch(req, res, user, payload);
-});
+}, { auth: true });
 
 async function handleChatDispatch(req, res, user, { ws, message, sessionId, mode, model, attachments }) {
   if (!message?.trim()) return send(res, 400, { error: "消息为空" });
