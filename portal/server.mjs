@@ -289,7 +289,49 @@ function ensureUserHome(uid) {
   applyAdminMcpToUser(uid);
   injectGlobalSkills(uid);
   stampHooksConfig(uid); // PreToolUse 守卫钩子（幂等盖章）
+  stampPluginAgentModels(uid); // 插件 agent 模型覆写（visual-judge 等写死官方账号 provider）
   return home;
+}
+
+/** 内核内置插件里 frontmatter 写死官方账号 provider 的 agent（租户无账号登录必然 spawn 失败）。
+ *  via pluginAgentModelSelectionOverrides（v2/agents-state.json，key = plugin:<manifest.name>:<agent 小写>） */
+const PLUGIN_AGENT_IDS = [
+  "plugin:@zcode/documents-plugin:visual-judge",
+  "plugin:@zcode/pdf-plugin:visual-judge",
+  "plugin:@zcode/presentations-plugin:visual-judge",
+  "plugin:@zcode/spreadsheets-plugin:visual-judge",
+];
+
+/** 把插件 agent 的模型覆写为管理员默认模型（幂等；读出现有 state 仅补齐这几个 key）。
+ *  覆写对象（{providerId,modelId,options?{reasoningLevel}}）与 agents-state.json 其余字段不动。
+ *  无模型配置时清空这几个覆写（回落 agent frontmatter 原值）；异常不阻断 ensureUserHome。 */
+function stampPluginAgentModels(uid) {
+  try {
+    const adminCfg = loadAdminModelConfig();
+    const main = String(adminCfg?.main || "").split("/");
+    const providerId = main[0], modelId = main.slice(1).join("/");
+    let selection = null;
+    if (providerId && modelId && adminCfg.provider?.[providerId]?.models?.[modelId]) {
+      const perModel = adminCfg.provider[providerId].models[modelId];
+      const levels = Array.isArray(perModel.reasoningLevels) ? perModel.reasoningLevels.filter((l) => REASONING_LEVELS.has(l)) : [];
+      selection = { providerId, modelId, ...(levels.length ? { options: { reasoningLevel: levels[levels.length - 1] } } : {}) };
+    }
+    const v2Dir = path.join(userHome(uid), ".zcode", "v2");
+    fs.mkdirSync(v2Dir, { recursive: true });
+    const statePath = path.join(v2Dir, "agents-state.json");
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { /* 首次/损坏：重建 */ }
+    if (typeof state !== "object" || state === null || Array.isArray(state)) state = {};
+    state.pluginAgentModelSelectionOverrides = typeof state.pluginAgentModelSelectionOverrides === "object" && state.pluginAgentModelSelectionOverrides !== null ? state.pluginAgentModelSelectionOverrides : {};
+    for (const key of PLUGIN_AGENT_IDS) {
+      if (selection) state.pluginAgentModelSelectionOverrides[key] = selection;
+      else delete state.pluginAgentModelSelectionOverrides[key];
+    }
+    const json = JSON.stringify(state, null, 2);
+    fs.writeFileSync(statePath, json);
+  } catch (e) {
+    log(`stampPluginAgentModels failed (non-fatal): ${uid.slice(0, 8)} ${e?.message || e}`);
+  }
 }
 
 /** 运行记录：runId → run hub 条目。CLI 子进程生命周期与 SSE 连接解耦：

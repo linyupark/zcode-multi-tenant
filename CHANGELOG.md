@@ -5,6 +5,22 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号暂以日期分节。
 每节按 **修复 / 变更 / 新增** 分组，注明涉及文件与回归验证方法。
 
+## [2026-11-10c]
+
+### 修复
+
+- **visual-judge「视觉审查 agent 不可用（provider 配置错误）」** (`portal/server.mjs` ensureUserHome + stampPluginAgentModels)
+  根因：内核四个官方插件（documents/pdf/presentations/spreadsheets）的 `agents/visual-judge.md`
+  frontmatter 写死 `model: account:bigmodel-individual-coding-plan/GLM-5.3-Flash` + `thoughtLevel: max`。
+  `account:` 前缀 = ZCode 官方账号套餐 provider，**需要账号登录才在 registry 中存在**；
+  租户环境无人登录 → spawn visual-judge 必然 `provider-not-found` / `account-connection-unavailable`。
+  与「老会话不换模型」同族：内核内置的写死模型没跟着管理员配置走。
+  修复：`ensureUserHome` 幂等写 `<home>/.zcode/v2/agents-state.json` 的
+  `pluginAgentModelSelectionOverrides`（key = `plugin:@zcode/<plugin>:visual-judge`，
+  内核 `JZt`/`B2e` 契约），覆写为管理员默认模型（思考等级取该模型配置最后一档）。
+  插件扩列表改 `PLUGIN_AGENT_IDS`；无模型配置时清空覆写回落 frontmatter 原值。
+  验证：真租户 home 上 dry-run 写入成功；key 前缀与 zod 校验（`plugin:` 开头 + Ll schema）匹配。
+
 ## [2026-11-10b]
 
 ### 修复
