@@ -5,6 +5,35 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号暂以日期分节。
 每节按 **修复 / 变更 / 新增** 分组，注明涉及文件与回归验证方法。
 
+## [2026-11-10b]
+
+### 修复
+
+- **管理员改模型配置后老会话不生效** (`portal/server.mjs` dispatchPrompt + stampSessionModelSelection)
+  根因（内核反混淆实锤）：resume 会话时内核优先用**会话库记录**（`session_entry`
+  type=`runtime/model_selection` 最后一条）里的旧模型/思考等级，管理员推送的新配置只对
+  新建会话生效。且 portal 一直写的 `env.ZCODE_MODEL` 在内核中**根本不存在**（grep 全部
+  `ZCODE_MODEL*` 只有 TELEMETRY/RETRY/CONTEXT_BUDGET/REASONING_SEPARATOR），
+  「per-run 模型覆盖」注释是误信的假契约；`--model` CLI 参数在 `--prompt` 无头路径同样不被消费。
+  修复：派发 `--resume` 前用 Node 内置 `node:sqlite`（v24 免依赖）把该会话的
+  `runtime-model-selection` 记录幂等 upsert 为本轮目标模型（管理员默认 > 无配置则跳过），
+  思考等级取该模型配置勾选的最后一档；旧格式多余记录清到只剩这条，保证内核 `.at(-1)` 读到。
+  fail-open：db 缺失/异常只记日志不阻断派发；`ZCODE_STAMP_MODEL=0` 可关闭保留现场。
+  验证：租户真库副本上写入后按内核 `$Or`/`ibs`/`u3`(zod strict) 解析路径读回校验通过。
+
+- **思考等级选 max 报错 `reasoningLevel is not supported by the model`** (`admin.html`)
+  根因：管理员配置的「思考等级」写进每模型 `optionSpecs.reasoningLevel.values`，成为该模型
+  **唯一的合法档位表**；此前是自由文本输入只填了 `high`，会话里用 `max` 恢复时校验失败。
+  内核内置枚举实为 `low/medium/high/xhigh/max`（另有 `disabled`=关闭思考，供不支持思考的模型）。
+  修复：admin 模型表单「思考等级」从 input 改为固定枚举勾选组（pill 样式），勾选的最后一档
+  为默认；全不勾 = 跟随内核默认。旧自由文本配置回显正常（按枚举匹配勾选）。
+  ⚠️ 教训：**每模型 optionSpecs 是白名单不是默认值**——要允许租户用 `max` 就必须勾上 `max`。
+
+### 回归自查清单增补（chat 链路已有 6 条之外）
+
+7. 管理员改默认模型 → 老会话发消息确认实际使用新模型（看流里 model.streaming 的模型名或 end 事件）。
+8. 模型勾选思考等级含 max → 会话恢复/切换到 max 不报 `reasoningLevel is not supported`。
+
 ## [2026-11-10]
 
 ### 修复

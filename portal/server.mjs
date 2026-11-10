@@ -699,10 +699,59 @@ function dispatchPrompt({ uid, ws, message, sessionId, mode, model, attachments 
     if (abs.startsWith(wsPath + path.sep) && fs.existsSync(abs)) args.push("--attach", abs);
   }
   if (sessionId) args.push("--resume", sessionId);
+  // resume 会话的模型选择：内核恢复会话时优先用会话库记录的旧模型/思考等级
+  // （session_entry type=runtime/model_selection 的最后一条），管理员改配置不生效。
+  // 派发前把该记录改写为管理员当前默认（adminDefault = "provider/model" 或 undefined）。
+  if (sessionId) stampSessionModelSelection(uid, sessionId, model);
   const env = cliEnv(uid, wsPath);
-  if (model) env.ZCODE_MODEL = model; // 官方契约：per-run 模型覆盖
   const child = spawn(process.execPath, args, { env, cwd: wsPath });
   return child;
+}
+
+/** 内核思考等级枚举（zcode.cjs 内置模型 schema 同款），disabled = 关闭思考 */
+const REASONING_LEVELS = new Set(["disabled", "low", "medium", "high", "xhigh", "max"]);
+const SESSION_DB = "db.sqlite";
+const MC_TYPE = "runtime/model_selection";
+
+/** 把会话库里的 runtime/model_selection 记录改写为指定模型（思考等级取该模型配置的最后一档）。
+ *  内核恢复会话（resume）时读取这条记录决定本轮用哪个模型——不写就永远用会话内旧模型，
+ *  管理员推送的新配置只对新建会话生效。db 不存在/无该记录/异常时静默跳过（fail-open）。
+ *  env ZCODE_STAMP_MODEL=0 可关闭（排查问题时保留现场）。 */
+function stampSessionModelSelection(uid, sessionId, modelName) {
+  if (process.env.ZCODE_STAMP_MODEL === "0") return;
+  try {
+    // 目标模型：本轮显式指定 > 管理员默认。都拿不到（无配置）就不动
+    const adminCfg = loadAdminModelConfig() || {};
+    const target = String(modelName || adminCfg.main || "").trim();
+    const [providerId, modelId] = target.split("/");
+    if (!providerId || !modelId) return;
+    const perModel = adminCfg.provider?.[providerId]?.models?.[modelId] || {};
+    const levels = Array.isArray(perModel.reasoningLevels) ? perModel.reasoningLevels.filter((l) => REASONING_LEVELS.has(l)) : [];
+    const level = levels.length ? levels[levels.length - 1] : undefined;
+    const data = JSON.stringify({
+      modelSelection: { providerId, modelId, ...(level ? { options: { reasoningLevel: level } } : {}) },
+    });
+    const dbPath = path.join(userHome(uid), ".zcode", "cli", "db", SESSION_DB);
+    if (!fs.existsSync(dbPath)) return;
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    try {
+      // 幂等 upsert：同会话重复派发只保留一条最新记录；原有记录改写 data 并刷新时间
+      const now = Date.now();
+      const existing = db.prepare("SELECT id, time_created FROM session_entry WHERE id = ?").get(`${sessionId}:runtime-model-selection`);
+      if (existing) {
+        db.prepare("UPDATE session_entry SET data = ?, time_updated = ? WHERE id = ?").run(data, now, existing.id);
+      } else {
+        db.prepare("INSERT INTO session_entry (id, session_id, type, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(`${sessionId}:runtime-model-selection`, sessionId, MC_TYPE, now, now, data);
+      }
+      // 旧格式可能有多条（id 带随机后缀的行）：全表清到只剩我们这条，保证 .at(-1) 读到目标
+      db.prepare("DELETE FROM session_entry WHERE session_id = ? AND type = ? AND id != ?")
+        .run(sessionId, MC_TYPE, `${sessionId}:runtime-model-selection`);
+    } finally { db.close(); }
+  } catch (e) {
+    log(`stampSessionModelSelection failed (non-fatal): ${sessionId?.slice(0, 20)}… ${e?.message || e}`);
+  }
 }
 
 // ---------- guardrail（租户行为约束：AGENTS.md 提示层 + PreToolUse 钩子拦截层）----------
