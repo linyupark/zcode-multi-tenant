@@ -152,8 +152,14 @@ function makeStreamHandler(t) {
       // 仅在对话流内展示拦截说明（Turn.svelte violations），
       // 不再写底部状态行——同一条文案上下重复会误导用户。
       t.violations.push({ message: ev.message, tool: ev.tool });
+    } else if (evName === "queue") {
+      // 新指令打断了旧任务：旧 run 正在收尾，本条已排队待派发
+      t.queued = true;
+      setStatus("已打断旧任务，本条排队中…");
     } else if (evName === "end") {
-      setStatus(ev.code === 0 ? "完成" : (`退出码 ${ev.code}` + (ev.error ? "：" + String(ev.error).slice(0, 80) : "")));
+      // 本轮曾收到 queue（被新指令打断）：end 是被打断的收尾，不是退出码错误
+      if (t.queued) setStatus("旧任务已打断，新指令执行中…");
+      else setStatus(ev.code === 0 ? "完成" : (`退出码 ${ev.code}` + (ev.error ? "：" + String(ev.error).slice(0, 80) : "")));
       if (ev.sessionId && session.sessionId !== ev.sessionId) { session.sessionId = ev.sessionId; syncHash(); }
       if (Array.isArray(ev.files) && ev.files.length) t.outputs = ev.files;
     } else if (evName === "error") {
@@ -186,6 +192,7 @@ function pushLiveTurn({ user, ts, files }) {
     fallbacks: [],
     violations: [],
     outputs: [],
+    queued: false,
     streaming: true,
   });
   // 关键：取回被 $state 深度代理后的引用再闭包使用，否则流式写入不触发 UI 更新

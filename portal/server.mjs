@@ -299,6 +299,10 @@ function ensureUserHome(uid) {
  *  key = `${uid}/${ws}/${runId}`；run 内含 uid/ws 做越权过滤。 */
 const runningSessions = new Map();
 
+// 同会话打断排队：runId → 待派发消息 [{req, res, user, payload}]。
+// 新指令到达但旧 run 还在收尾（kill 后进程退出有间隙）时暂存，end 后依序派发。
+const runQueue = new Map();
+
 const RUN_RING_MAX = 4000; // 事件缓冲上限（超过后整段丢弃早期事件；单轮工具事件远达不到）
 
 function runKey(run) { return `${run.uid}/${run.ws}/${run.runId}`; }
@@ -1055,9 +1059,64 @@ function normalizePromptSlash(message, skills) {
 }
 
 // --- chat: dispatch + SSE（支持模型自动回退：默认模型失败且未产生内容时，按 fallbacks 顺序重试） ---
+// 同会话打断排队（见 runQueue）：处理器主体抽成 handleChatDispatch，新指令到达时
+// 要么入队（旧 run 收尾后派发），要么直接执行；旧 run 的 end 回调里调 dispatchQueued。
+
+/** 同会话打断队列的续发：旧 run 结束后依序派发排队中的消息（串行，避免再次并发）。
+ *  每条派发前重查该会话是否已有新 run——有则说明上一条排队消息已自己起 run，停止。 */
+function dispatchQueued(runId) {
+  const q = runQueue.get(runId);
+  if (!q?.length) { runQueue.delete(runId); return; }
+  runQueue.delete(runId);
+  const next = async () => {
+    const item = q.shift();
+    if (!item) return;
+    // 防御：上一条排队消息派发后已起了同会话新 run，余下的继续入新队列
+    const liveNow = [...runningSessions.values()].find((r) =>
+      r.uid === item.user.uid && !r.ended && (item.payload.ws || "default") === r.ws &&
+      item.payload.sessionId && (r.sessionId === item.payload.sessionId || r.reqSession === item.payload.sessionId));
+    if (liveNow) {
+      liveNow.stopped = true;
+      if (liveNow.pid) { try { process.kill(liveNow.pid); } catch { /* 已退出 */ } }
+      const nq = runQueue.get(liveNow.runId) || [];
+      nq.push(...q, item); runQueue.set(liveNow.runId, nq);
+      return;
+    }
+    try {
+      await handleChatDispatch(item.req, item.res, item.user, item.payload);
+    } catch (e) {
+      log(`dispatchQueued error: ${e?.message || e}`);
+      try { send(item.res, 500, { error: "排队消息派发失败: " + (e?.message || e) }); } catch { /* 已响应 */ }
+    }
+    next();
+  };
+  next();
+}
 
 route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
-  let { ws, message, sessionId, mode, model, attachments } = await readJson(req);
+  const payload = await readJson(req);
+  if (!payload?.message?.trim()) return send(res, 400, { error: "消息为空" });
+  // 同会话并发防护：同一会话已有未完结 run 时，新指令插入 = 打断旧任务（等同停止
+  // 按钮：置 stopped + kill，进程退出后旧 run 收 end）。中断间隙到达的消息进队列，
+  // 由旧 run 的 end 回调依序派发。否则两个 CLI 同时 --resume 同一会话会交错写
+  // 会话历史、互踩工作区文件（模型看到「文件被外部编辑」、内容串改）。
+  const live = [...runningSessions.values()].find((r) =>
+    r.uid === user.uid && !r.ended && (payload.ws || "default") === r.ws &&
+    payload.sessionId && (r.sessionId === payload.sessionId || r.reqSession === payload.sessionId));
+  if (live) {
+    live.stopped = true; // 不再走模型回退链
+    if (live.pid) { try { process.kill(live.pid); } catch { /* 已退出 */ } }
+    const q = runQueue.get(live.runId) || [];
+    q.push({ req, res, user, payload });
+    runQueue.set(live.runId, q);
+    runEmit(live, "queue", { message: String(payload.message).slice(0, 200) }); // 前端展示「已排队」
+    log(`chat interrupt: user=${user.uid.slice(0, 8)} ws=${payload.ws} 打断 run=${live.runId}，新消息已排队`);
+    return; // 本请求的 SSE 由 dispatchQueued 派发时接管
+  }
+  return handleChatDispatch(req, res, user, payload);
+});
+
+async function handleChatDispatch(req, res, user, { ws, message, sessionId, mode, model, attachments }) {
   if (!message?.trim()) return send(res, 400, { error: "消息为空" });
   const dir = wsDir(user.uid, ws || "default");
   if (!dir.startsWith(userWsRoot(user.uid))) return send(res, 400, { error: "工作区非法" });
@@ -1076,6 +1135,7 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
     subs: new Set(), ring: [], ended: false, endedAt: 0,
     start: Date.now(), pid: null, sessionId: sessionId || null, message: String(message).slice(0, 500),
     stopped: false, // 显式停止（停止按钮/管理员禁用）：终止后不再走模型回退链
+    reqSession: sessionId || null, // 派发请求原样携带的会话 id（首条消息时 CLI 才回真实 id）
   };
   runningSessions.set(runKey(run), run);
   let sessionIdSeen = sessionId || null;
@@ -1232,9 +1292,11 @@ route("POST", /^\/api\/chat$/, async (req, res, m, user) => {
   run.ended = true;
   run.endedAt = Date.now();
   runEmit(run, "end", { code: lastRes.ok ? 0 : (lastRes.code ?? 1), sessionId: sessionIdSeen, fallbackCount, error: lastRes.ok ? null : (lastRes.error || null), files: outFiles });
+  // 同会话打断排队的续发：旧 run 已收尾，排队中的新指令此刻派发（无排队则空操作）
+  setTimeout(() => dispatchQueued(runId), 50); // 略缓于 end 事件，让前端先收尾旧轮
   // 首订阅者的响应流到此结束（订阅者断开不影响 run；run 缓冲留 2h 供 attach 重放，sweepRuns 兜底回收）
   try { res.end(); } catch { /* 客户端可能已断开 */ }
-}, { auth: true });
+}
 
 // --- 断线续播：重连一个后台仍在运行的 run（刷新页面后恢复流式状态） ---
 
