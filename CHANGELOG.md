@@ -36,6 +36,11 @@
   思考等级取该模型配置勾选的最后一档；旧格式多余记录清到只剩这条，保证内核 `.at(-1)` 读到。
   fail-open：db 缺失/异常只记日志不阻断派发；`ZCODE_STAMP_MODEL=0` 可关闭保留现场。
   验证：租户真库副本上写入后按内核 `$Or`/`ibs`/`u3`(zod strict) 解析路径读回校验通过。
+  连带治愈：**「Select a model before sending a message」全链回退失败**——resume 会话的
+  持久化模型选择校验失败（如旧记录 level=max 不在新配置白名单）时，内核不是回落默认
+  而是**清空** CliDefaultSelection，首条消息必抛此错且 fallback 链上每个模型同样失败
+  （PrepareInput 读的是这个实例，fallback 只换模型名）。stamp 每次派发重写为与配置
+  一致的合法选择，两类症状（恢复旧模型 / 全链无输出）同根同修。
 
 - **思考等级选 max 报错 `reasoningLevel is not supported by the model`** (`admin.html`)
   根因：管理员配置的「思考等级」写进每模型 `optionSpecs.reasoningLevel.values`，成为该模型
