@@ -89,7 +89,7 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
 .mdl-table th:nth-child(3){width:110px}
 .mdl-table th:nth-child(4),.mdl-table th:nth-child(5){width:86px}
 .mdl-table th:nth-child(6),.mdl-table th:nth-child(7),.mdl-table th:nth-child(8){width:66px}
-.mdl-table th:nth-child(9){width:230px}
+.mdl-table th:nth-child(9){width:110px}
 .mdl-table th:nth-child(10){width:106px}
 .mdl-table tbody tr:last-child td{border-bottom:0}
 .mdl-table tbody tr:hover{background:transparent}
@@ -98,11 +98,6 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
 .mdl-table input[type=number]::-webkit-outer-spin-button,
 .mdl-table input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .mdl-table input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;display:block;margin:0 auto}
-/* 思考等级勾选组：横向小标签，勾选高亮 */
-.lv-group{display:flex;flex-wrap:wrap;gap:4px}
-.lv-item{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:2px 8px;cursor:pointer;user-select:none}
-.lv-item:has(input:checked){border-color:var(--accent);color:var(--accent);font-weight:500}
-.lv-item input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
 .mdl-table select{padding:6px 4px;font-size:12px}
 .mdl-table td.idx{color:var(--muted);font-family:"IBM Plex Mono",monospace;font-size:12px;text-align:center}
 .mdl-table td.ck{text-align:center}
@@ -224,7 +219,7 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
             </table>
           </div>
           <div class="btn-row" style="margin-top:10px"><button class="ghost" id="btn-add-model" type="button">添加模型</button></div>
-          <div class="hint">上下文 / 最大输出留空 = 跟随内核默认。视觉 / PDF / 视频默认「默认」= 按模型名推断；选「支持 / 不支持」可显式覆盖。思考等级勾选该模型可用的档位（<code class="mono">disabled / low / medium / high / xhigh / max</code>），勾选的最后一档为默认；全不勾 = 跟随内核默认。注意：会话恢复用的是会话内记录的模型与等级，改配置后请确认勾选覆盖了老会话用过的等级，否则恢复会回落默认模型。</div>
+          <div class="hint">上下文 / 最大输出留空 = 跟随内核默认。视觉 / PDF / 视频默认「默认」= 按模型名推断；选「支持 / 不支持」可显式覆盖。思考等级单选该模型固定使用的档位（<code class="mono">disabled / low / medium / high / xhigh / max</code>），留空 = 跟随内核默认。</div>
         </div>
         <div class="msg err" id="pv-err"></div>
         <div class="msg ok" id="pv-ok"></div>
@@ -406,12 +401,17 @@ document.querySelectorAll("#sidebar .nav-item[data-page]").forEach((el) => {
 });
 
 /* model */
-/* 思考等级固定枚举（与内核内置模型一致），勾选顺序即保存顺序；disabled = 关闭思考，供不支持思考的模型用 */
+/* 思考等级固定枚举（与内核内置模型一致），单选；disabled = 关闭思考，供不支持思考的模型用 */
 const LEVEL_DEFS = ["disabled", "low", "medium", "high", "xhigh", "max"];
 function modelRowHtml(m = {}) {
   const tri = (v) => `<option value=""${v === undefined ? " selected" : ""}>默认</option><option value="1"${v === true ? " selected" : ""}>支持</option><option value="0"${v === false ? " selected" : ""}>不支持</option>`;
+  // 单值语义：reasoningLevels 数组取最后一档作为当前值（兼容旧多选数据）
   const levels = m.reasoningLevels || [];
-  const lvGroup = `<div class="lv-group">${LEVEL_DEFS.map((lv) => `<label class="lv-item"><input type="checkbox" class="m-levels" value="${lv}"${levels.includes(lv) ? " checked" : ""}>${lv}</label>`).join("")}</div>`;
+  const current = levels.length ? levels[levels.length - 1] : "";
+  const lvSelect = `<select class="m-levels" title="该模型的思考等级">
+    <option value=""${current === "" ? " selected" : ""}>默认</option>
+    ${LEVEL_DEFS.map((lv) => `<option value="${lv}"${current === lv ? " selected" : ""}>${lv}</option>`).join("")}
+  </select>`;
   return `<tr>
     <td class="idx"></td>
     <td><input type="text" class="m-id" value="${esc(m.id || "")}" placeholder="glm-5.3"></td>
@@ -421,7 +421,7 @@ function modelRowHtml(m = {}) {
     <td class="ck"><select class="m-img" title="图片输入">${tri(m.supportsImages)}</select></td>
     <td class="ck"><select class="m-pdf" title="PDF 输入">${tri(m.supportsPdf)}</select></td>
     <td class="ck"><select class="m-video" title="视频输入">${tri(m.supportsVideo)}</select></td>
-    <td>${lvGroup}</td>
+    <td>${lvSelect}</td>
     <td><div class="row-ops"><button type="button" class="mv-up" title="上移">↑</button><button type="button" class="mv-down" title="下移">↓</button><button type="button" class="del" title="移除">移除</button></div></td>
   </tr>`;
 }
@@ -476,8 +476,8 @@ function readModelRows() {
       supportsImages: tri(".m-img"),
       supportsPdf: tri(".m-pdf"),
       supportsVideo: tri(".m-video"),
-      // 勾选的思考等级按固定枚举顺序收集（最后一个为默认）；兼容旧自由文本输入
-      reasoningLevels: LEVEL_DEFS.filter((lv) => tr.querySelector(`.m-levels[value="${lv}"]`)?.checked),
+      // 单值：选中的档位（留空 = 跟随内核默认，reasoningLevels 不下发）
+      reasoningLevels: tr.querySelector(".m-levels").value ? [tr.querySelector(".m-levels").value] : [],
     };
   });
   if (!list.length) throw new Error("至少配置一个模型");
