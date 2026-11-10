@@ -68,6 +68,14 @@
   <Modal width={400}><PasswordPanel /></Modal>
 {/if}
 
+{#if ui.toasts.length}
+  <div class="toasts" role="status">
+    {#each ui.toasts as t (t.id)}
+      <div class="toast">{t.text}</div>
+    {/each}
+  </div>
+{/if}
+
 <style>
   /* 外壳：横幅（可选）+ 网格，纵向排布；横幅不占网格行，#app 始终两行，topbar/sheet 行号稳定 */
   .shell-root{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100vh)}
@@ -87,5 +95,15 @@
     #app{grid-template-columns:1fr;grid-template-rows:52px minmax(0,1fr)}
     #sheet{grid-column:1;grid-row:2;margin:0;border:0;border-radius:0;height:100%}
     .impersonation-banner{font-size:11.5px;padding:6px 10px}
+  }
+  /* 错误 toast：浮层置顶居中，自动消失，不占布局 */
+  .toasts{
+    position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:100;
+    display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;
+  }
+  .toast{
+    background:#3c1f1f;color:#ffd7d7;border:1px solid #a33;font-size:13px;
+    padding:8px 16px;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.25);
+    max-width:min(80vw,480px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   }
 </style>

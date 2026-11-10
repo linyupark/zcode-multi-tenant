@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import { applyDocumentBranding } from "../branding.js";
-import { ui, setStatus, closeDrawer } from "./ui.svelte.js";
+import { ui, setStatus, closeDrawer, toast } from "./ui.svelte.js";
 import { chat, runs, replay, clearChat, refreshRuns, restoreRunningRun, detachLive } from "./chat.svelte.js";
 
 /** 会话态：登录账号 / 工作区 / 当前会话 / 权限模式 / 白标 */
@@ -150,7 +150,7 @@ export async function deleteSession(sid) {
     }
     await loadWorkspaces();
   } catch (e) {
-    setStatus("删除失败: " + e.message);
+    toast("删除失败: " + e.message);
   }
 }
 

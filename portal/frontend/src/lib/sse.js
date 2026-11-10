@@ -31,9 +31,10 @@ export async function runChatStream({ url = "/api/chat", body, signal, onEvent }
       const evLine = lines.find((l) => l.startsWith("data: "));
       const evName = (lines.find((l) => l.startsWith("event: ")) || "").slice(7);
       if (!evLine) continue;
-      onEvent(evName, JSON.parse(evLine.slice(6)));
+      const data = JSON.parse(evLine.slice(6));
+      onEvent(evName, data);
       // end = 本轮结束；replay-done(ended:true) = attach 重放发现 run 已完结
-      if (evName === "end" || (evName === "replay-done" && ev.ended)) ended = true;
+      if (evName === "end" || (evName === "replay-done" && data.ended)) ended = true;
     }
     if (ended) { try { await reader.cancel(); } catch { /* noop */ } break; }
   }

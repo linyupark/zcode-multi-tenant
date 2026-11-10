@@ -1,4 +1,4 @@
-import { ui, setStatus } from "./stores/ui.svelte.js";
+import { ui, setStatus, toast } from "./stores/ui.svelte.js";
 import { session } from "./stores/session.svelte.js";
 
 /** 上传单个文件为待发送附件（附件按钮 / 拖拽 / Ctrl+V 粘贴共用） */
@@ -12,7 +12,8 @@ export async function uploadOne(f) {
     ui.atts.push({ wsPath: j.wsPath, filename: j.filename });
     setStatus("");
   } catch (e) {
-    setStatus("上传失败: " + e.message);
+    setStatus("");
+    toast("上传失败: " + e.message);
   }
 }
 

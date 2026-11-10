@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import { runChatStream } from "../sse.js";
-import { ui, setStatus } from "./ui.svelte.js";
+import { ui, setStatus, toast } from "./ui.svelte.js";
 import { session, loadWorkspaces, syncHash } from "./session.svelte.js";
 
 /** 聊天态：turns 统一承载回放轮与流式轮（streaming:true 表示正在生成）。
@@ -65,7 +65,7 @@ export async function replay(sessionId) {
     chat.beforeSeq = turns[0]?.seq ?? 0;
     chat.scrollTick++;
   } catch (e) {
-    setStatus("回放失败: " + e.message);
+    toast("回放失败: " + e.message);
   }
   chat.loading = false;
 }
@@ -80,7 +80,7 @@ export async function loadEarlier() {
     chat.hasMore = !!hasMore;
     if (turns.length) chat.beforeSeq = turns[0].seq;
   } catch (e) {
-    setStatus("加载更早失败: " + e.message);
+    toast("加载更早失败: " + e.message);
   }
   chat.loadingEarlier = false;
 }
@@ -157,7 +157,7 @@ function makeStreamHandler(t) {
       if (ev.sessionId && session.sessionId !== ev.sessionId) { session.sessionId = ev.sessionId; syncHash(); }
       if (Array.isArray(ev.files) && ev.files.length) t.outputs = ev.files;
     } else if (evName === "error") {
-      setStatus("错误: " + ev.message);
+      toast("错误: " + ev.message);
     }
   };
 }
@@ -233,7 +233,7 @@ export async function send(text) {
         if (!t.text) t.text = "（已停止）";
       }
     } else {
-      setStatus("错误: " + e.message);
+      toast("错误: " + e.message);
       if (!t.text) t.text = "（出错：" + e.message + "）";
     }
   } finally {
@@ -262,7 +262,7 @@ export async function attachRun(runId, t) {
       if (unsubOnly) unsubOnly = false;
       return true; // 用户停止/切走：按已处理算
     }
-    if (!String(e.message).includes("404")) setStatus("恢复运行失败: " + e.message);
+    if (!String(e.message).includes("404")) toast("恢复运行失败: " + e.message);
     return false;
   } finally {
     if (abort === myAbort) {
