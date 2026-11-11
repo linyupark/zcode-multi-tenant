@@ -5,6 +5,35 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号暂以日期分节。
 每节按 **修复 / 变更 / 新增** 分组，注明涉及文件与回归验证方法。
 
+## [2026-11-11]
+
+### 新增
+
+- **MCP 按租户追加 headers**（`portal/server.mjs` · `portal/frontend/public/admin.html`）
+  场景：同一个 MCP 网关按调用者身份返回不同数据（如财务 / 研发只看各自知识库），
+  但此前 headers 是全员共享的一份，无法区分角色。现在 url 型 MCP 支持
+  `userHeaders: { "<uid>": { "X-Role": "finance" } }`：保存时按租户合并进各自的
+  `config.json`（同名 header 覆盖公共值），`userHeaders` 只存于 `data/mcp.json`，
+  不写进租户配置、租户端 `/api/mcp` 仍只返回 id+kind。
+  header 值支持 `${username}` / `${displayName}` / `${uid}` 占位符（单遍展开），
+  公共 headers 里也可用——网关直接把用户名映射为角色时无需逐个租户配置。
+  校验：header 名 RFC 7230 token、值必须单行字符串（防 CRLF 注入）、
+  userHeaders 仅 url 型、键必须是租户 UID。管理页新增「按租户追加 headers」
+  行编辑器（回填 / 移除）与「以某租户身份测试」探测（`/api/admin/mcp/probe`
+  接受可选 `uid`，合并该租户 headers 后真实探测工具列表）。
+  ⚠️ 安全边界：租户仍可读到自己的 config.json（HOME 隔离所限），但拿不到别人的
+  header；按租户独立 token 比共享 token 爆炸半径更小。
+  验证：隔离门户实例上 31 项端到端断言（合并/占位符/隔离/非法配置/重新推送/
+  新租户注册即生效）+ 浏览器实测添加、测试、保存、编辑回填、移除全链路。
+
+### 修复
+
+- **`portal/static` 构建产物漂移**（`portal/frontend`）
+  `portal/static/` 是 gitignore 的 vite 产物，源码在 `portal/frontend/public/admin.html`。
+  本次发现工作区里的 static 落后于源码（例如 11-10 的「思考等级单选 select」
+  在 static 里还是旧文本框），直接改 static 会在下次 `npm run build` 时被覆盖。
+  已把改动落到源码并重建；**改管理页一律改 `portal/frontend/public/admin.html` 后构建**。
+
 ## [2026-11-10c]
 
 ### 修复

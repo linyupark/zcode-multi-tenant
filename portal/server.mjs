@@ -428,14 +428,57 @@ function maskSecret(v) {
   return `${head}****（${s.length}位）`;
 }
 
-/** 把管理员 MCP 配置合并进用户 HOME 的 cli/config.json（全量覆盖 mcp.servers，保留其他字段） */
-function applyAdminMcpToUser(uid, adminCfg = loadAdminMcp()) {
+// MCP 条目的门户侧扩展字段：userHeaders = { "<uid>": { "Header": "value" } }。
+// 只存在于 data/mcp.json，下发时按租户合并进该用户的 config.json；租户端 API 永不返回，
+// 用户的额外 header 也不会出现在别人的配置里（比全员共享一个 Authorization 更小的爆炸半径）。
+const MCP_PLACEHOLDER_RE = /\$\{(username|displayName|uid)\}/g;
+
+function mcpUserVars(uid, users = loadUsers()) {
+  const rec = users[uid] || {};
+  return { uid, username: rec.username || "", displayName: rec.displayName || rec.username || "" };
+}
+
+/** 替换 header 值里的 ${username}/${displayName}/${uid}（单遍替换，插入值不会被二次展开） */
+function interpolateMcpHeaders(headers, vars) {
+  const out = {};
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return out;
+  for (const [name, value] of Object.entries(headers)) {
+    out[name] = String(value).replace(MCP_PLACEHOLDER_RE, (_, key) => String(vars[key] ?? ""));
+  }
+  return out;
+}
+
+/** 某租户最终生效的 MCP servers：公共 headers + 该租户额外 headers（同名覆盖）再展开占位符。
+ *  userHeaders 是门户元数据，不写进租户 config.json。 */
+function buildUserMcpServers(adminCfg, uid, users = loadUsers()) {
+  const vars = mcpUserVars(uid, users);
+  const servers = {};
+  for (const [id, raw] of Object.entries(adminCfg?.servers || {})) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const entry = { ...raw };
+    const extra = entry.userHeaders && typeof entry.userHeaders === "object" && !Array.isArray(entry.userHeaders)
+      ? entry.userHeaders[uid] : null;
+    delete entry.userHeaders;
+    const headers = {
+      ...interpolateMcpHeaders(entry.headers, vars),
+      ...interpolateMcpHeaders(extra, vars),
+    };
+    if (Object.keys(headers).length) entry.headers = headers;
+    else delete entry.headers;
+    servers[id] = entry;
+  }
+  return servers;
+}
+
+/** 把管理员 MCP 配置合并进用户 HOME 的 cli/config.json（全量覆盖 mcp.servers，保留其他字段）。
+ *  批量为全部租户推送时传入 users，避免每个用户都读一遍 users.json。 */
+function applyAdminMcpToUser(uid, adminCfg = loadAdminMcp(), users = null) {
   const home = userHome(uid);
   const cfgPath = path.join(home, ".zcode", "cli", "config.json");
   if (!fs.existsSync(cfgPath)) return false;
   try {
     const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
-    cfg.mcp = { ...(cfg.mcp || {}), servers: adminCfg?.servers || {} };
+    cfg.mcp = { ...(cfg.mcp || {}), servers: buildUserMcpServers(adminCfg, uid, users || loadUsers()) };
     cfg.features = { ...(cfg.features || {}), mcp: Object.keys(cfg.mcp.servers).length > 0 };
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     return true;
@@ -492,6 +535,20 @@ function injectGlobalSkills(uid) {
   return skills.length;
 }
 
+/** header 名按 RFC 7230 token 校验；值必须单行字符串（防 CRLF 注入 / 非法类型被 CLI 拒载） */
+const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+function validateHeaderMap(map, label) {
+  if (map === undefined) return null;
+  if (!map || typeof map !== "object" || Array.isArray(map)) return `${label} 需为对象`;
+  for (const [name, value] of Object.entries(map)) {
+    if (!HEADER_NAME_RE.test(name)) return `${label} 中 header 名非法: ${name}`;
+    if (typeof value !== "string") return `${label}.${name} 需为字符串`;
+    if (/[\r\n]/.test(value)) return `${label}.${name} 不能包含换行`;
+  }
+  return null;
+}
+
 /** MCP server 条目校验：command 型或 url 型二选一 */
 function validateMcpServer(entry) {
   if (!entry || typeof entry !== "object") return "条目缺失";
@@ -502,7 +559,17 @@ function validateMcpServer(entry) {
   if (url && !/^https?:\/\//.test(url)) return "url 需以 http(s):// 开头";
   if (entry.args && !Array.isArray(entry.args)) return "args 需为数组";
   if (entry.env && (typeof entry.env !== "object" || Array.isArray(entry.env))) return "env 需为对象";
-  if (entry.headers && (typeof entry.headers !== "object" || Array.isArray(entry.headers))) return "headers 需为对象";
+  const hdrErr = validateHeaderMap(entry.headers, "headers");
+  if (hdrErr) return hdrErr;
+  if (entry.userHeaders !== undefined) {
+    if (!url) return "按租户 headers 仅适用于 url 型服务器";
+    if (!entry.userHeaders || typeof entry.userHeaders !== "object" || Array.isArray(entry.userHeaders)) return "userHeaders 需为对象（租户 UID → header 对象）";
+    for (const [uid, map] of Object.entries(entry.userHeaders)) {
+      if (!isValidUid(uid)) return `userHeaders 键需为租户 UID（16 位 hex）: ${uid}`;
+      const err = validateHeaderMap(map, `userHeaders[${uid}]`);
+      if (err) return err;
+    }
+  }
   return null;
 }
 
@@ -1766,8 +1833,15 @@ route("POST", /^\/api\/chat\/stop$/, async (req, res, m, user) => {
 
 route("POST", /^\/api\/admin\/mcp\/probe$/, async (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const { server } = await readJson(req);
-  send(res, 200, await probeMcpServer(server));
+  const { server, uid } = await readJson(req);
+  // 可选 uid：以该租户身份探测（合并其额外 headers + 展开占位符），用于验证按租户配置是否真的生效
+  let entry = server;
+  if (uid) {
+    const users = loadUsers();
+    if (!isValidUid(uid) || !users[uid]) return send(res, 400, { error: "租户不存在" });
+    entry = buildUserMcpServers({ servers: { __probe: server } }, uid, users).__probe;
+  }
+  send(res, 200, await probeMcpServer(entry));
 });
 
 route("GET", /^\/api\/admin\/mcp\/tools$/, async (req, res) => {
@@ -1936,7 +2010,7 @@ route("POST", /^\/api\/admin\/mcp$/, async (req, res) => {
   saveAdminMcp({ servers });
   const users = loadUsers();
   let pushed = 0;
-  for (const uid of Object.keys(users)) if (applyAdminMcpToUser(uid, { servers })) pushed++;
+  for (const uid of Object.keys(users)) if (applyAdminMcpToUser(uid, { servers }, users)) pushed++;
   log(`admin mcp config saved: ${Object.keys(servers).length} servers → pushed ${pushed} users`);
   send(res, 200, { ok: true, pushed, count: Object.keys(servers).length });
 });

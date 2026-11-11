@@ -326,10 +326,21 @@ td code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5p
             <div class="field"><label>env（JSON 对象，command 型可选）</label><input id="mcp-env" placeholder='{"KEY":"value"}'></div>
           </div>
         </div>
+        <div class="field" style="margin-top:2px">
+          <label>按租户追加 headers（可选，仅 url 型；同名 header 覆盖上面的公共值）</label>
+          <div id="mcp-uh-list" style="margin-bottom:8px"></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="mcp-uh-uid" class="mono" style="max-width:230px"></select>
+            <input id="mcp-uh-json" class="mono" placeholder='{"X-Role":"finance","X-User":"${username}"}'>
+            <button class="ghost" id="btn-mcp-uh-add" type="button" style="white-space:nowrap">添加</button>
+          </div>
+          <div class="hint">值支持占位符 <code class="mono">${username}</code> / <code class="mono">${displayName}</code> / <code class="mono">${uid}</code>，下发到每个租户时展开；公共 headers 里也可以用。点「测试」可按该租户合并后的 headers 探测工具列表。</div>
+        </div>
         <div class="msg err" id="mcp-err"></div>
         <div class="msg ok" id="mcp-ok"></div>
         <div class="btn-row">
           <button id="btn-mcp-add">添加并推送全部租户</button>
+          <select id="mcp-test-uid" style="max-width:210px" title="按该租户合并后的 headers 探测"><option value="">不模拟租户</option></select>
           <button class="ghost" id="btn-mcp-test">先测试工具列表</button>
           <button class="ghost hidden" id="btn-mcp-cancel">取消编辑</button>
         </div>
@@ -704,17 +715,25 @@ $("btn-gsk-reinject").onclick = async () => {
 /* ---------- MCP ---------- */
 let mcpServers = {};
 let mcpEditing = null; // 正在编辑的 server id（null = 新增模式）
+let mcpUsers = []; // 租户列表（按租户 headers 选择用）
+let mcpUserHeaders = {}; // 编辑中的按租户 headers：uid → { Header: value }
 
 async function loadMcp() {
-  const { servers } = await api("/api/admin/mcp");
+  const [{ servers }, u] = await Promise.all([
+    api("/api/admin/mcp"),
+    api("/api/admin/users").catch(() => ({ users: [] })),
+  ]);
   mcpServers = servers || {};
+  mcpUsers = u.users || [];
   renderMcp();
+  renderMcpUserHeaders();
 }
 
 function mcpEntrySummary(s) {
   if (s.command) return `command <code class="mono">${esc(s.command)} ${(s.args || []).join(" ").slice(0, 60)}</code>`;
   const hdr = s.headers && Object.keys(s.headers).length ? ` · headers: ${Object.keys(s.headers).join(", ")}` : "";
-  return `url <code class="mono">${esc(s.url)}</code>${hdr}`;
+  const uh = s.userHeaders && Object.keys(s.userHeaders).length ? ` · 按租户 headers: ${Object.keys(s.userHeaders).length} 人` : "";
+  return `url <code class="mono">${esc(s.url)}</code>${hdr}${uh}`;
 }
 
 function renderMcp() {
@@ -753,6 +772,9 @@ function startEditMcp(id) {
   $("mcp-url").value = s.url || "";
   $("mcp-headers").value = s.headers ? JSON.stringify(s.headers) : "";
   $("mcp-env").value = s.env ? JSON.stringify(s.env) : "";
+  mcpUserHeaders = s.userHeaders && typeof s.userHeaders === "object" && !Array.isArray(s.userHeaders)
+    ? JSON.parse(JSON.stringify(s.userHeaders)) : {};
+  renderMcpUserHeaders();
   $("btn-mcp-add").textContent = "保存修改并推送全部租户";
   $("btn-mcp-cancel").classList.remove("hidden");
   $("mcp-ok").textContent = `正在编辑「${id}」`;
@@ -764,6 +786,9 @@ function resetMcpForm() {
   $("mcp-id").value = ""; $("mcp-id").disabled = false;
   $("mcp-cmd").value = ""; $("mcp-args").value = ""; $("mcp-url").value = "";
   $("mcp-headers").value = ""; $("mcp-env").value = "";
+  mcpUserHeaders = {};
+  $("mcp-uh-json").value = "";
+  renderMcpUserHeaders();
   $("btn-mcp-add").textContent = "添加并推送全部租户";
   $("btn-mcp-cancel").classList.add("hidden");
   $("mcp-tools-result").innerHTML = "";
@@ -778,8 +803,78 @@ function readMcpForm() {
   if ($("mcp-url").value.trim()) entry.url = $("mcp-url").value.trim();
   if ($("mcp-headers").value.trim()) entry.headers = JSON.parse($("mcp-headers").value);
   if ($("mcp-env").value.trim()) entry.env = JSON.parse($("mcp-env").value);
+  if (Object.keys(mcpUserHeaders).length) entry.userHeaders = mcpUserHeaders;
   return entry;
 }
+
+function mcpUserLabel(uid) {
+  const u = mcpUsers.find((x) => x.uid === uid);
+  if (!u) return `${uid}（租户已不存在）`;
+  const dn = u.displayName && u.displayName !== u.username ? `（${u.displayName}）` : "";
+  return `${u.username}${dn}`;
+}
+
+function renderMcpUserHeaders() {
+  const entries = Object.entries(mcpUserHeaders);
+  $("mcp-uh-list").innerHTML = entries.length
+    ? entries.map(([uid, hdrs]) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--raised);border-radius:6px;margin-bottom:6px" data-uh-row="${esc(uid)}">
+        <span style="flex:1;min-width:0;overflow:hidden"><b>${esc(mcpUserLabel(uid))}</b>
+          <span class="mono" style="color:var(--muted);font-size:12px;margin-left:8px">${esc(JSON.stringify(hdrs))}</span></span>
+        <button class="ghost" data-uh-test="${esc(uid)}" style="padding:3px 10px;white-space:nowrap">测试</button>
+        <button class="ghost" data-uh-del="${esc(uid)}" style="padding:3px 10px;white-space:nowrap;color:var(--negative);border-color:var(--negative)">移除</button>
+      </div>`).join("")
+    : `<div class="hint" style="margin:0">未配置——所有租户使用公共 headers。</div>`;
+
+  $("mcp-uh-list").querySelectorAll("[data-uh-del]").forEach((btn) => btn.onclick = () => {
+    delete mcpUserHeaders[btn.dataset.uhDel];
+    renderMcpUserHeaders();
+  });
+  $("mcp-uh-list").querySelectorAll("[data-uh-test]").forEach((btn) => btn.onclick = () => testMcpAsUser(btn.dataset.uhTest));
+
+  const avail = mcpUsers.filter((u) => !mcpUserHeaders[u.uid]);
+  $("mcp-uh-uid").innerHTML = avail.length
+    ? avail.map((u) => `<option value="${esc(u.uid)}">${esc(u.username)}${u.displayName && u.displayName !== u.username ? `（${esc(u.displayName)}）` : ""}</option>`).join("")
+    : `<option value="">（没有可添加的租户）</option>`;
+
+  // 测试身份下拉：全部租户可选（用于验证公共 headers 里占位符/按租户 header 的实际下发结果）
+  const sel = $("mcp-test-uid"), cur = sel.value;
+  sel.innerHTML = `<option value="">不模拟租户（公共 headers）</option>` + mcpUsers.map((u) =>
+    `<option value="${esc(u.uid)}">以 ${esc(u.username)} 身份测试</option>`).join("");
+  if (mcpUsers.some((u) => u.uid === cur)) sel.value = cur;
+}
+
+/** 以某个租户身份探测：合并该租户的额外 headers 并展开占位符，验证网关是否按身份返回不同数据 */
+async function testMcpAsUser(uid) {
+  $("mcp-err").textContent = ""; $("mcp-ok").textContent = "";
+  $("mcp-tools-result").innerHTML = `以「${esc(mcpUserLabel(uid))}」身份探测中…`;
+  try {
+    const entry = readMcpForm();
+    const r = await api("/api/admin/mcp/probe", { method: "POST", body: JSON.stringify({ server: entry, uid }) });
+    renderToolsResult($("mcp-tools-result"), r);
+  } catch (e) {
+    $("mcp-tools-result").innerHTML = `<span class="msg err" style="margin:0">${esc(e.message)}</span>`;
+  }
+}
+
+$("btn-mcp-uh-add").onclick = () => {
+  $("mcp-err").textContent = "";
+  const uid = $("mcp-uh-uid").value;
+  if (!uid) { $("mcp-err").textContent = "没有可添加的租户（或所有租户都已配置）"; return; }
+  let hdrs;
+  try { hdrs = JSON.parse($("mcp-uh-json").value.trim() || "{}"); }
+  catch { $("mcp-err").textContent = "租户 headers 需为合法 JSON 对象"; return; }
+  if (!hdrs || typeof hdrs !== "object" || Array.isArray(hdrs) || !Object.keys(hdrs).length) {
+    $("mcp-err").textContent = '租户 headers 需为非空 JSON 对象，如 {"X-Role":"finance"}';
+    return;
+  }
+  for (const [name, value] of Object.entries(hdrs)) {
+    if (typeof value !== "string") { $("mcp-err").textContent = `header ${name} 的值需为字符串`; return; }
+    if (/[\r\n]/.test(value)) { $("mcp-err").textContent = `header ${name} 的值不能包含换行`; return; }
+  }
+  mcpUserHeaders[uid] = hdrs;
+  $("mcp-uh-json").value = "";
+  renderMcpUserHeaders();
+};
 
 function renderToolsResult(container, r) {
   if (!r.ok) { container.innerHTML = `<span class="msg err" style="margin:0">探测失败：${esc(r.error || "未知错误")}</span>`; return; }
@@ -807,8 +902,14 @@ $("btn-mcp-test").onclick = async () => {
   $("mcp-err").textContent = ""; $("mcp-ok").textContent = "";
   try {
     const entry = readMcpForm();
-    $("mcp-tools-result").innerHTML = "探测中…";
-    const r = await api("/api/admin/mcp/probe", { method: "POST", body: JSON.stringify({ server: entry }) });
+    const uid = $("mcp-test-uid").value;
+    if (!uid && /\$\{(username|displayName|uid)\}/.test(JSON.stringify(entry.headers || {}))) {
+      $("mcp-err").textContent = "headers 里含租户占位符，请先选择「以某租户身份测试」";
+      return;
+    }
+    const as = uid ? `（以「${mcpUserLabel(uid)}」身份）` : "";
+    $("mcp-tools-result").innerHTML = `探测中…${esc(as)}`;
+    const r = await api("/api/admin/mcp/probe", { method: "POST", body: JSON.stringify({ server: entry, ...(uid ? { uid } : {}) }) });
     renderToolsResult($("mcp-tools-result"), r);
   } catch (e) { $("mcp-err").textContent = e.message; }
 };
